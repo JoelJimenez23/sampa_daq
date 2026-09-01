@@ -1131,7 +1131,7 @@ class Panel(object):
             return json.dumps(self.acc.snapshot(), separators=(",", ":"))
 
     def html(self):
-        return self.sampa_view.page(vivo=True, title=self.acc.title)
+        return self.sampa_view.page(live=True, title=self.acc.title)
 
     # The protocol handshake: concatenate the client's key with this fixed
     # GUID (RFC 6455), hash with SHA-1 and return it base64-encoded.
