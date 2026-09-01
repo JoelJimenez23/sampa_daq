@@ -1,0 +1,161 @@
+# =======================================================================
+# Bench configuration -- socfpga_cyclone5 board, MPW2 chip
+#
+# This is NOT example.toml. That one shows the format; this one is the real
+# bench: a single chip (address 0), four serial links, and the time window
+# the board actually uses.
+#
+# Every value here was READ BACK FROM THE CHIP, not guessed.
+#
+# HOW TO APPLY IT, always in this order:
+#
+#   ./sampa_cfg --dry-run apply bench.toml    # 1. see what it would do
+#   ./sampa_cfg --verify  apply bench.toml    # 2. apply and read back
+#   ./daqstat                                 # 3. check the links
+#
+# --verify reads each global register back after writing it and complains if
+# it does not match. It costs nothing and stops you ending up with a
+# half-applied configuration.
+# =======================================================================
+
+
+# --- What this file does NOT touch, on purpose -------------------------
+#
+# [sequence]   no resets. reset_sampa = true would throw away the state
+#              that currently works. Add it by hand if you ever need it.
+#
+# Every section is optional: what is not here is not written.
+
+
+# --- Clocks ------------------------------------------------------------
+# DISABLED ON PURPOSE, and not for lack of data: the values below were
+# MEASURED on a working board. It is left out because the PLL the bitstream
+# loads at boot is already this one, so writing it adds nothing, and any
+# mistake here brings the serial links down.
+#
+# Read with:
+#     ./daqstat 0xFF20200C 2      -> N = 0x0302, M = 0x3030
+#     ./daqstat 0xFF202028 5      -> the five dividers
+# Each word carries the high count in [15:8] and the low count in [7:0]; the
+# divider is the SUM of the two (that is what pllRefresh_Click does in
+# Form1.cs).
+#
+#   VCO = 50 MHz * 96/5 = 960 MHz     <- NOTE: 960, not 160
+#     adc      = 960/96 =  10 MHz  -> 0.1 us per sample
+#     bx       = 960/24 =  40 MHz  -> the LHC 40 MHz clock
+#     so       = 960/3  = 320 MHz  -> serial output
+#     rad_slvs = 960/2  = 480 MHz
+#     aux      = 960/8  = 120 MHz
+#
+# It checks out two independent ways: 1000 samples at 10 MHz = 100 us, and
+# 4000 bx at 40 MHz = 100 us. That is the readout period measured in the
+# captures.
+#
+# Do NOT use the values from example.toml (M=32, N=10, adc=16, bx=4, so=1):
+# they give the same adc and the same bx, but leave 'so' at 160 MHz instead
+# of 320, i.e. half the serial output clock. Tried, and it breaks the links.
+#
+# [pll]
+# M   = 96
+# N   = 5
+# adc = 96
+# bx  = 24
+# so  = 3
+
+
+# --- FPGA: which links are read ----------------------------------------
+# serial_enable is a field inside CNTRL_REG and is written with a
+# read-modify-write, so it does NOT clobber the 'acquire' count.
+#
+# 0x00F = links 0,1,2,3. Those are the four that show 'sync yes' in daqstat;
+# links 4..10 are not wired on this board.
+#
+# This does the same as 'daqstat links 0x00F', but leaves a written record of
+# what the good configuration of this bench is.
+
+[fpga.dm]
+serial_enable = 0x00F
+das_enable    = 0        # exclusive with the serial links: 0 = links
+
+
+# --- The chip ----------------------------------------------------------
+
+[[chip]]
+address = 0
+
+  [chip.global]
+
+  # 0x31 = continuous mode (bit 0) + header generation for empty channels
+  #        (bit 4) + power save (bit 5).
+  # It is the chip's default value and what the board has.
+  # Bit 3 (Huffman) stays 0 ON PURPOSE: section 1.5.1 of the SAMPA
+  # specification, which should carry the code table, is empty, so that data
+  # could not be decoded.
+  VACFG  = 0x31
+
+  # Serial outputs. Read from the chip: 0x14.
+  #   [3:0] = 4  four serial outputs, the four links on this board
+  #   [4]   = 1  internal termination disabled (same as the default)
+  #   [5]   = 0  NBflowstop_in pin disabled. The default is 1, but that pin
+  #              only matters when daisy-chaining several SAMPAs on one
+  #              serial link (specification section 2.4). Here there is a
+  #              single chip and the pin goes nowhere: enabling it would let
+  #              a floating input stop the transmission.
+  #
+  # NOTE: if this ever reads 0x1B, a 'fixsync' left it there (or the GUI's
+  # FixSync button), which writes eleven serial outputs. Put it back to 0x14
+  # and re-issue LNKSYNC:  ./sampa_cfg write 0 CMD 6
+  SOCFG  = 0x14
+
+  # Time window. TWLEN is "number of cycles + 1", so 0x3E7 = 999 gives 1000
+  # samples per readout, which is exactly the window measured in the data
+  # arriving on port 1000.
+  TWLENL = 0xE7          # low byte of 0x3E7
+  TWLENH = 0x03          # high byte
+
+  # --- Active channels -------------------------------------------------
+  # ONE register per link:  CHEN0 -> link 0 (channels 0-7)
+  #                         CHEN1 -> link 1 (channels 8-15)
+  #                         CHEN2 -> link 2 (channels 16-23)
+  #                         CHEN3 -> link 3 (channels 24-31)
+  #
+  # Each link carries 32000 bits per window and each channel needs about
+  # 10070, so three channels per link fit and no more:
+  #
+  #   channels/link   mask      occupancy   truncation   total channels
+  #        1          0x01         31 %         0 %             4
+  #        2          0x03         63 %         0 %             8
+  #        3          0x07         94 %         0 %            12
+  #        4          0x0F        126 %        ~21 %           16
+  #        8          0xFF        252 %        ~60 %           32
+  #
+  # The table is measured, not estimated: with 0xFF the model predicts
+  # 39.7 % of packets carrying data and 39.4 % was measured, twice.
+  #
+  # Three per link here = 12 channels without losing a single sample.
+  # Note CHEN1 and CHEN2: they skip channels 10 and 23, which are dead on
+  # this chip (they read flat, and their 31 channel registers are identical
+  # to those of their healthy neighbours: it is silicon, not configuration).
+  CHEN0 = 0x07           # channels 0, 1, 2
+  CHEN1 = 0x0B           # channels 8, 9, 11   (skips 10)
+  CHEN2 = 0x07           # channels 16, 17, 18
+  CHEN3 = 0x07           # channels 24, 25, 26
+
+  # To go back to all 32 channels, accepting the ~60 % truncation:
+  #   CHEN0 = 0xFF / CHEN1 = 0xFF / CHEN2 = 0xFF / CHEN3 = 0xFF
+
+
+# --- If you need a bit the TOML cannot name ----------------------------
+# fpga_regs.csv names 18 fields, but not every bit. Of SMP_CFG_REG (CNC 12)
+# it only names three: das_split, das_resync and sampa_clk_stop. This board
+# has it at 0x13000037, i.e. with bits 0,1,2,4,5,24,25,28 set, none of which
+# has a name yet.
+#
+# For those cases there is a raw write, just like the hex box on the GUI's
+# "FPGA registers" page:
+#
+#   [fpga.cnc.raw]
+#   12 = 0x13000037
+#
+# It is applied before the named fields, so you can set the whole register
+# and then tune one field on top of it.

@@ -1,0 +1,28 @@
+# The most harmless possible test of 'sampa_cfg apply'.
+#
+# There is no [sequence], no [pll] and no [fpga]: every section is optional,
+# so this resets NOTHING, touches NO clock and leaves CNTRL_REG alone. It
+# writes a single global register of chip 0.
+#
+# The idea is to write the value the register ALREADY has. That exercises the
+# whole path -- read the TOML, resolve the name, write over I2C and read back
+# with --verify -- without changing the chip's behaviour at all.
+#
+# HOW TO USE IT
+#   1. See what is there now:      ./sampa_cfg read 0 VACFG
+#   2. Put that same value below, instead of 0x1FF
+#   3. Apply with read-back:       ./sampa_cfg --verify apply minimal_test.toml
+#   4. Check it is unchanged:      ./sampa_cfg read 0 VACFG
+#
+# If step 3 says nothing and step 4 returns the same value, 'apply' works
+# against hardware. If --verify finds a difference, it reports both the value
+# written and the value read back.
+
+[[chip]]
+address = 0
+
+  [chip.global]
+  VACFG = 0x1FF   # <-- PUT HERE whatever step 1 returned
+                  # Left as-is, this value does not fit in 8 bits and
+                  # sampa_cfg refuses to apply it. That is deliberate: an
+                  # unedited file cannot write anything to the chip.

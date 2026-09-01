@@ -1,0 +1,87 @@
+# -----------------------------------------------------------------------
+# Complete configuration of the SAMPA test bench
+#
+# Covers the same ground as the "SAMPA communicator" GUI: clocks (PLL),
+# FPGA registers (CNC and DM), SAMPA global and channel registers, and the
+# reset/synchronisation sequence.
+#
+# It is ALWAYS applied in this order, because the order matters:
+#   1. reset          2. PLL          3. FPGA
+#   4. globals        5. channels     6. final sync
+#
+# To list the valid names:      sampa_cfg regs
+# To try without touching HW:   sampa_cfg --dry-run apply example.toml
+#
+# WARNING: this is an EXAMPLE OF THE FORMAT, not the configuration of any
+# particular bench. It enables all eleven serial links, resets the SAMPA and
+# configures a second chip. For a real setup, see bench.toml.
+# -----------------------------------------------------------------------
+
+[sequence]
+reset_sampa   = true    # hardware reset before configuring anything
+soft_reset    = true    # CMD=5 to each chip after configuring it
+bx_sync       = true    # synchronise the bunch-crossing counter at the end
+event_trigger = false   # additionally, fire an event trigger
+
+
+# --- Clocks ------------------------------------------------------------
+# VCO = 50 MHz * M / N.  Each output divides the VCO.
+# Outputs: adc, bx, so, rad_slvs (not wired), aux
+[pll]
+M   = 32
+N   = 10
+adc = 16                # 160 MHz / 16 = 10 MHz
+bx  = 4                 # 40 MHz
+so  = 1                 # 160 MHz
+
+# --- FPGA registers ----------------------------------------------------
+[fpga.cnc]
+pulse_low       = 0     # 0 = pulse generator off
+pulse_shift     = 0
+pulse_count     = 1
+slvs_enable     = 1
+shiftreg_enable = 0
+
+[fpga.dm]
+serial_enable = 0x7FF   # all 11 serial links active
+das_enable    = 0
+edge_select   = 0x000
+edge_delay    = 0x7FF   # normally the inverse of edge_select
+pcca_mode     = 0       # 0 = NCCA, 1 = PCCA
+
+
+# --- Chip 0 ------------------------------------------------------------
+[[chip]]
+address = 0
+
+  [chip.global]
+  VACFG  = 0x24         # cluster sum + drop empty headers
+  SOCFG  = 0x01         # a single serial output
+  PRETRG = 10           # pre-samples before the trigger
+  TWLENL = 0xE7         # time window, low byte
+  TWLENH = 0x03         # time window, high byte
+  CHEN0  = 0xFF         # channels 0-7 active
+  CHEN1  = 0xFF
+  CHEN2  = 0xFF
+  CHEN3  = 0xFF
+
+  [chip.channels.all]   # broadcast to all 32 channels
+  ZSTHR = 400           # zero-suppression threshold
+  ZSCFG = 0x00
+  FPD   = 0             # fixed pedestal
+
+  [chip.channels.5]     # channel 5 gets a different threshold
+  ZSTHR = 600
+
+
+# --- Chip 1 ------------------------------------------------------------
+# Delete this whole block if you only have one chip.
+[[chip]]
+address = 1
+
+  [chip.global]
+  VACFG = 0x24
+  SOCFG = 0x11          # a different serial output from chip 0
+
+  [chip.channels.all]
+  ZSTHR = 400

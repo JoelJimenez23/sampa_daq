@@ -1,0 +1,72 @@
+;size;pos;add;RO;compound;default;
+HWADD;4;0;00;TRUE;0;00;Chip address (hardware address)
+TRCNTL;8;0;01;TRUE;0;00;Trigger count, lower byte
+TRCNTH;8;0;02;TRUE;0;00;Trigger count, upper byte
+BXCNTLL;8;0;03;TRUE;0;00;Bunch crossing count, lower byte
+BXCNTLH;8;0;04;TRUE;0;00;Bunch crossing count, mid byte
+BXCNTHL;4;0;05;TRUE;0;00;Bunch crossing count, upper byte
+PRETRG;8;0;06;FALSE;0;00;Number of pre-samples (Pre-trigger delay), max 192
+TWLENL;8;0;07;FALSE;0;E7;Number of cycles for time window +1, lower byte
+TWLENH;2;0;08;FALSE;0;03;Number of cycles for time window +1, upper byte
+ACQSTARTL;8;0;09;FALSE;0;00;Number of cycles to wait before acquisition starts, lower byte
+ACQSTARTH;2;0;0A;FALSE;0;00;Number of cycles to wait before acquisition starts, upper byte
+ACQENDL;8;0;0B;FALSE;0;FF;Number of cycles elapsed from trigger to acquisition end +1, lower byte
+ACQENDH;2;0;0C;FALSE;0;03;Number of cycles elapsed from trigger to acquisition end +1, upper byte
+VACFG;8;0;0D;FALSE;1;31;Various configuration settings
+VACFG;1;0;0D;FALSE;2;01;Continuous mode enabled
+VACFG;1;1;0D;FALSE;2;00;Raw data enable
+VACFG;1;2;0D;FALSE;2;00;Cluster sum enable
+VACFG;1;3;0D;FALSE;2;00;Huffman enable
+VACFG;1;4;0D;FALSE;2;01;Enable header generation for empty channels
+VACFG;1;5;0D;FALSE;2;01;Power save enable
+VACFG;1;6;0D;FALSE;2;00;Enable automatic clock gating on I2C block
+VACFG;1;7;0D;FALSE;2;00;Enable clock gating on neighbour block when number of neighbour is 0
+CMD;3;0;0E;FALSE;0;00;Commands
+NBCFG;8;0;0F;FALSE;1;40;Neighbor configuration settings
+NBCFG;6;0;0F;FALSE;2;00;Neighbor input delay, ca. 0.2 ns per bit for a total of ca. 12.5 ns
+NBCFG;2;6;0F;FALSE;2;01;Number of neighbors
+ADCDEL;7;0;10;FALSE;1;00;ADC sampling clock delay
+ADCDEL;6;0;10;FALSE;2;00;ADC sampling clock delay, ca. 1.5 ns per bit for a total of ca. 94.5 ns
+ADCDEL;1;6;10;FALSE;2;00;Invert ADC sampling clock
+ADCTRIM;3;0;11;FALSE;0;04;Voltage reference trimming
+SOCFG;5;0;12;FALSE;1;14;Serial link configuration
+SOCFG;4;0;12;FALSE;2;04;Number of serial out, 0-11
+SOCFG;1;4;12;FALSE;2;01;Disable internal termination of input differential links
+SODRVST;8;0;13;FALSE;1;55;Serial link drive strength configuration
+SODRVST;2;0;13;FALSE;2;01;Drive strength of serial out 4-0
+SODRVST;2;2;13;FALSE;2;01;Drive strength of neighbor flow stop out/serial out 5
+SODRVST;2;4;13;FALSE;2;01;Drive strength of serial out 6,8,10
+SODRVST;2;6;13;FALSE;2;01;Drive strength of serial out 7,9
+ERRORS;8;0;14;TRUE;1;00;Errors accumulated
+ERRORS;5;0;14;TRUE;2;00;Correctable header hamming errors
+ERRORS;3;5;14;TRUE;2;00;Uncorrectable header hamming errors
+PMADDL;8;0;15;FALSE;0;00;Pedestal memory address, lower byte
+PMADDH;2;0;16;FALSE;0;00;Pedestal memory address, upper byte
+CHRGADD;5;0;17;FALSE;0;00;Channel register address
+CHRGWDATL;8;0;18;FALSE;0;00;Channel register write data, lower byte
+CHRGWDATH;5;0;19;FALSE;0;00;Channel register write data, upper byte
+CHRGCTL;8;0;1A;FALSE;1;00;Channel register control
+CHRGCTL;5;0;1A;FALSE;2;00;Channel number
+CHRGCTL;1;5;1A;FALSE;2;00;Broadcast to all channels (channel number ignored)
+CHRGCTL;1;6;1A;FALSE;2;00;Write, not read from register address (returns to read after write)
+CHRGCTL;1;7;1A;FALSE;2;00;Increment PMADD (returns automatically to zero)
+CHRGRDATL;8;0;1B;TRUE;0;00;Channel register read data, lower byte
+CHRGRDATH;5;0;1C;TRUE;0;00;Channel register read data, upper byte
+CHORDAT;5;0;1D;FALSE;0;00;Channel readout order data
+CHORDCTL;6;0;1E;FALSE;1;00;Channel readout order control
+CHORDCTL;5;0;1E;FALSE;2;00;Position in order
+CHORDCTL;1;5;1E;FALSE;2;00;Write enable
+BYPASS;4;0;1F;FALSE;0;00;Bypass inputs to serial 0
+SERCHSEL;5;0;20;FALSE;0;00;Channel select for ADC test serializer mode in bypass
+RINGCNT;8;0;21;TRUE;0;00;Ring oscillator counter difference from reference ADC clock
+CLKCONF;7;0;22;TRUE;0;00;Clock configuration pin status
+BOUNDARY;5;0;23;TRUE;1;00;Status of differential input pins
+BOUNDARY;1;0;23;TRUE;2;00;NBflowstop_in
+BOUNDARY;1;1;23;TRUE;2;00;DinN
+BOUNDARY;1;2;23;TRUE;2;00;hb_trg
+BOUNDARY;1;3;23;TRUE;2;00;trg
+BOUNDARY;1;4;23;TRUE;2;00;bx_sync_trg
+CHEN0;8;0;24;FALSE;0;FF;Channel enable 7-0
+CHEN1;8;0;25;FALSE;0;FF;Channel enable 15-8
+CHEN2;8;0;26;FALSE;0;FF;Channel enable 23-16
+CHEN3;8;0;27;FALSE;0;FF;Channel enable 31-24

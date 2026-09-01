@@ -1,0 +1,32 @@
+block;name;reg;pos;bits;RO;description
+# Configurable FPGA fields, extracted from Form1.cs of "SAMPA communicator".
+# block : cnc = command_and_control (0xFF200000), dm = data_manager (0xFF201000)
+# reg   : register index inside the block (the same one the GUI uses)
+# pos   : lowest bit of the field;  bits: width of the field
+#
+# Lines starting with # are ignored.
+#
+# --- CNC: command register (reg 3) ------------------------------------------
+cnc;command;3;0;16;FALSE;Command: 2=SAMPA reset, 3=event trigger, 4=heartbeat, 5=bunch-crossing sync, 7=clear shiftreg errors
+cnc;pulse_count;3;16;15;FALSE;Number of pulses to generate
+cnc;pulse_continuous;3;31;1;FALSE;Continuous pulse generation
+# --- CNC: pulse generator (reg 4) -------------------------------------------
+cnc;pulse_low;4;0;12;FALSE;Cycles the pulse generator stays low (0 = off)
+cnc;pulse_shift;4;12;7;FALSE;Fine pulse shift, in SO clock periods
+# --- CNC: event configuration (reg 7) ---------------------------------------
+cnc;test_data_source;7;0;2;FALSE;Test data source
+cnc;slvs_enable;7;2;1;FALSE;Enable the SLVS output
+cnc;shiftreg_enable;7;3;1;FALSE;Enable the shift register / continuous memory test
+cnc;rad_test_num;7;4;3;FALSE;Radiation test number
+# --- CNC: SAMPA configuration (reg 12) --------------------------------------
+cnc;das_split;12;19;1;FALSE;Split DAS mode
+cnc;das_resync;12;20;1;FALSE;Re-synchronise the DAS
+cnc;sampa_clk_stop;12;27;1;FALSE;Stop the SAMPA clock (for slow-clock mode)
+# --- DM: control register (reg 0) -------------------------------------------
+dm;serial_enable;0;0;11;FALSE;Enable mask for the 11 serial links (bit 0 = link 0)
+dm;das_enable;0;11;1;FALSE;Enable DAS mode (exclusive with the serial links)
+dm;packet_count;0;16;16;FALSE;Number of packets to acquire
+# --- DM: edge selection (reg 38) --------------------------------------------
+dm;edge_select;38;0;11;FALSE;Sampling edge of each link (1 bit per link)
+dm;edge_delay;38;11;11;FALSE;Delay of each link, normally the inverse of edge_select
+dm;pcca_mode;38;22;1;FALSE;Board type: 0 = NCCA, 1 = PCCA

@@ -1,0 +1,57 @@
+;size;pos;add;RO;compound;default;
+K1;13;0;0;FALSE;0;0;First pole of the TCFU
+K2;13;0;1;FALSE;0;0;Second pole of the TCFU
+K3;13;0;2;FALSE;0;0;Third pole of the TCFU
+K4;13;0;3;FALSE;0;0;Fourth pole of the TCFU
+L1;13;0;4;FALSE;0;0;First zero of the TCFU
+L2;13;0;5;FALSE;0;0;Second zero of the TCFU
+L3;13;0;6;FALSE;0;0;Third zero of the TCFU
+L4;13;0;7;FALSE;0;0;Fourth zero of the TCFU
+L30;13;0;8;FALSE;0;0;TCFU IIR SOS first zero(L3) gain
+ZSTHR;12;0;9;FALSE;0;0;Zero suppression threshold, 2 bit precision
+ZSOFF;13;0;0A;FALSE;0;0;Offset added before truncation, 2's compliment, 2 bit precision
+ZSCFG;9;0;0B;FALSE;1;0;Zero suppression configuration
+ZSCFG;2;0;0B;FALSE;2;0;Glitch filter, minimum accepted pulse, all, >1, >2, >2
+ZSCFG;3;2;0B;FALSE;2;0;Post-samples
+ZSCFG;2;5;0B;FALSE;2;0;Pre-samples
+ZSCFG;1;7;0B;FALSE;2;0;Change position of BC3 in pipeline (BC3 after BC2)
+ZSCFG;1;8;0B;FALSE;2;0;Enable Raw data output of ZSU
+FPD;13;0;0C;FALSE;0;0;BC1 Fixed pedestal (offset subtracted), 2's compliment, 2 bit precision
+VPD;13;0;0D;TRUE;0;0;BC1 variable pedestal, 2's compliment
+BC2BSL;13;0;0E;TRUE;0;0;BC2 Computed Baseline, 2's compliment
+BC3BSL;13;0;0F;TRUE;0;0;BC3 Computed Baseline, 2's compliment
+PMDATA;10;0;10;FALSE;0;0;Data to be stored or read from the pedestal memory
+BC2LTHRREL;10;0;11;FALSE;0;3;BC2 lower relative threshold
+BC2HTHRREL;10;0;12;FALSE;0;3;BC2 higher relative threshold
+BC2LTHRBSL;11;0;13;FALSE;0;400;BC2 lower saturation level for baseline
+BC2HTHRBSL;11;0;14;FALSE;0;3FF;BC2 higher saturation level for baseline
+BC2CFG;11;0;15;FALSE;1;0;BC2 configuration
+BC2CFG;2;0;15;FALSE;2;0;Number of taps in moving average filter
+BC2CFG;2;2;15;FALSE;2;0;BC2 pre-samples
+BC2CFG;4;4;15;FALSE;2;0;BC2 post-samples
+BC2CFG;1;8;15;FALSE;2;0;BC2 glitch removal
+BC2CFG;2;9;15;FALSE;2;0;Auto reset configuration
+BC2RSTVAL;8;0;16;FALSE;0;32;Reset value for maf baseline when auto reset is enabled
+BC2RSTCNT;8;0;17;FALSE;0;0FF;Number of samples outside of thresholds before resetting maf filter (divided by 4)
+DPCFG;12;0;18;FALSE;1;400;Data path configuration
+DPCFG;4;0;18;FALSE;2;0;BC1 mode
+DPCFG;1;4;18;FALSE;2;0;BC1 data input polarity
+DPCFG;1;5;18;FALSE;2;0;BC1 pedestal memory polarity
+DPCFG;1;6;18;FALSE;2;0;BC1 pedestal memory record from input
+DPCFG;1;7;18;FALSE;2;0;TCFU enabled
+DPCFG;1;8;18;FALSE;2;0;BC2 moving average filter enable
+DPCFG;1;9;18;FALSE;2;0;BC3 filter enable
+DPCFG;1;10;18;FALSE;2;0;TCFU SOS Architecture enable
+DPCFG;1;11;18;FALSE;2;0;TCFU signed Pole/Zero enable
+BC1THRL;11;0;19;FALSE;0;7FC;Lower threshold of variable pedestal filter, 2's compliment
+BC1THRH;11;0;1A;FALSE;0;3;Higher threshold of variable pedestal filter, 2's compliment
+BC1CFG;10;0;1B;FALSE;1;08C ;BC1 configuration
+BC1CFG;4;0;1B;FALSE;2;4;Number of taps in variable pedestal filter
+BC1CFG;1;4;1B;FALSE;2;1;Define open threshold time of 31(high)/15(low) samples after (auto)reset 
+BC1CFG;1;5;1B;FALSE;2;0;Force enable IIR also inside time window
+BC1CFG;1;6;1B;FALSE;2;0;High if BC1THR should be considered absolute, else relative
+BC1CFG;2;7;1B;FALSE;2;2;Shift output data of pedestal memory
+BC1CFG;1;9;1B;FALSE;2;0;BC1 negative clipping enabled
+BC1RSTCNT;8;0;1C;FALSE;0;0;Number of samples outside of thresholds before resetting vpd filter (divided by 4) 0 disables the auto reset
+BC3SLD;8;0;1D;FALSE;0;20;Rate of the BC3 baseline down counter
+BC3SLU;8;0;1E;FALSE;0;10;Rate of the BC3 baseline up counter

@@ -1,0 +1,91 @@
+#!/bin/sh
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+DAEMON=/media/card/sampa_server
+NAME=sampa
+DESC="SAMPA DAQ Server"
+OPTS="1000"
+
+# Acquisition tools. They live on the card, like the server, so they can be
+# updated by putting the SD into a computer.
+DAQSTAT=/media/card/daqstat
+DAQINIT=/media/card/daq_init.sh
+
+# Run a system patch
+if [ -e /media/card/run_patch ]
+then
+  if [ ! -x /media/card/run_patch ]
+  then
+    chmod +x /media/card/run_patch
+  fi
+  source /media/card/run_patch
+  mv /media/card/run_patch /media/card/run_patch.done
+fi
+
+# Check if server exists and make executable
+if [ -e /media/card/sampa_server ]
+then
+  if [ ! -x /media/card/sampa_server ]
+  then
+    chmod +x /media/card/sampa_server
+  fi
+else
+  echo -n "ERROR: Sampa server missing from card"
+  exit 1
+fi
+
+# Same for daqstat and daq_init.sh. This must happen BEFORE the read-only
+# remount, because the card arrives from Windows without the execute bit.
+for f in "$DAQSTAT" "$DAQINIT"
+do
+  if [ -e "$f" ] && [ ! -x "$f" ]
+  then
+    chmod +x "$f"
+  fi
+done
+
+# Remount sd-card read only to avoid the "check filesystem" message
+mount -o remount,ro /media/card/
+
+case "$1" in
+  start)
+        echo -n "Starting $DESC: "
+        start-stop-daemon --start -b -x "$DAEMON" -- $OPTS
+        echo "$NAME."
+        # Leave the acquisition ready. Without this the server listens on
+        # 1000 but the FPGA sends nothing: the serial links are still not
+        # enabled in CNTRL_REG and the acquisition never started.
+        if [ -x "$DAQINIT" ]
+        then
+          DAQSTAT="$DAQSTAT" "$DAQINIT"
+        fi
+        ;;
+  stop)
+        echo -n "Stopping $DESC: "
+        start-stop-daemon --stop -x "$DAEMON"
+        echo "$NAME."
+        ;;
+  restart|force-reload)
+        echo -n "Restarting $DESC: "
+        start-stop-daemon --stop -x "$DAEMON"
+        sleep 1
+        start-stop-daemon --start -b -x "$DAEMON" -- $OPTS
+        echo "$NAME."
+        if [ -x "$DAQINIT" ]
+        then
+          DAQSTAT="$DAQSTAT" "$DAQINIT"
+        fi
+        ;;
+  daq)
+        # Only re-arm the acquisition, leaving the server alone.
+        DAQSTAT="$DAQSTAT" "$DAQINIT"
+        ;;
+  *)
+        N=/etc/init.d/$NAME
+        echo "Usage: $N {start|stop|restart|force-reload|daq}" >&2
+        exit 1
+        ;;
+esac
+
+
+exit 0
