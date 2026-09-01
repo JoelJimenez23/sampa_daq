@@ -46,7 +46,13 @@ environment, no dependencies. It behaves the same on Linux and on Windows.
 | `--channel` | N | — | filter by channel |
 | `--only-problems` | — | no | only suspicious packets |
 | `--raw` | N | — | dump the first N words uninterpreted, then exit |
-| `--save` | FILE | — | save the stream exactly as it arrives, losslessly |
+| `-d`, `--duration` | TIME | — | capture for exactly this long, then stop |
+| `--save` | [FILE] | — | save the stream losslessly. With no name, one is built from the run's start and end times |
+| `--zs` | COUNTS \| off | — | set the zero-suppression threshold on the chip, in ADC counts. Needs `--board` |
+| `--zs-pre` | N | 1 | samples kept before each pulse, 0 to 3 |
+| `--zs-post` | N | 2 | samples kept after each pulse, 0 to 7 |
+| `--allow-writes` | — | no | let the web page change the chip. Binds the server to 127.0.0.1 |
+| `--sampa-cfg` | PATH | `./sampa_cfg` | where `sampa_cfg` lives on the board |
 | `--csv` | PREFIX | — | write `PREFIX_packets.csv` |
 | `--csv-long` | — | no | also `PREFIX_samples.csv`, one row per sample |
 | `--csv-clusters` | — | no | also `PREFIX_clusters.csv` |
@@ -110,6 +116,106 @@ python3 sampa_sniff/sampa_sniff.py -f run1.bin --csv run1 --csv-long -q
 
 `-f` reads from the file instead of the network. The decoding is exactly the
 same, so you can reprocess a capture as often as you like.
+
+---
+
+## Timed captures
+
+A run of an exact length, which is what an experiment usually needs:
+
+```sh
+python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --duration 30m --save
+```
+
+`--duration` accepts the two shapes people actually write:
+
+| Form | Examples |
+|---|---|
+| clock | `01:30:00` (1 h 30 min), `90:00` (90 min), `2:30` (2 min 30 s) |
+| suffixes | `45s`, `5m`, `2h`, `1h30m`, `2h5m30s` |
+
+A bare number is seconds.
+
+The stop time is measured with a **monotonic** clock, so an NTP correction or
+a daylight-saving change in the middle of a long run cannot stretch or shorten
+the experiment. It is also checked during silent stretches: if the board sends
+nothing for a while, the capture neither gives up early nor overruns.
+
+### The file names itself after the experiment
+
+`--save` with no name builds one from the wall-clock times of the run:
+
+```
+sampa_2026-09-01_1430-00_to_1500-00.bin
+```
+
+Date first, so `ls` sorts chronologically. While the run is in progress the
+end time is not known yet, so the file is opened as `..._to_RUNNING.bin` and
+renamed when it closes — which means the name always carries the **real** end
+time, even if you cut the run short with Ctrl-C.
+
+Giving `--save a_name.bin` still works exactly as before.
+
+---
+
+## Zero suppression
+
+Zero suppression happens on the **chip**, not in this receiver, and its three
+registers do not say what they mean:
+
+| Register | What it is | The trap |
+|---|---|---|
+| `ZSTHR` | the threshold, 12 bits | it is in **quarters** of an ADC count. A threshold of 100 is written as 400 |
+| `ZSCFG` | configuration, 9 bits | `[1:0]` glitch filter, `[4:2]` post-samples, `[6:5]` pre-samples, `[8]` raw output |
+| `VACFG` | bit 1 | while this is 1 the chip sends whole windows and the threshold does nothing at all |
+
+Get any one of the three wrong and it looks exactly like "zero suppression
+does not work". So you give a threshold in ADC counts and how many samples to
+keep around each pulse, and the rest is worked out for you:
+
+```sh
+# threshold 100 ADC counts, 1 sample before the pulse and 2 after
+python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 --board --zs 100
+
+# more context around each pulse
+python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 --board --zs 100 --zs-pre 3 --zs-post 7
+
+# off: send whole windows again
+python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 --board --zs off
+```
+
+It runs **before** connecting, so if the configuration fails nothing is
+captured and the single client slot on port 1000 is not taken. Ranges are
+checked before anything is written: a threshold above 1023.75 counts, or
+pre/post outside 0-3 and 0-7, is refused with a message rather than silently
+truncated.
+
+`--zs` needs `--board`, because the threshold is written over ssh with
+`sampa_cfg`, not by this receiver.
+
+### From the web page
+
+With `--allow-writes` the live view grows a **Zero suppression** panel: three
+boxes (threshold, pre, post), *apply* and *turn off*, plus a button to start
+an `acquire` burst. It echoes back the registers it wrote.
+
+```sh
+python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --web --board --allow-writes
+```
+
+> **Writing is off by default, and switching it on changes where the server
+> listens.** A read-only view can be served to the whole lab: the worst a
+> visitor can do is look. As soon as the page can write to the chip that stops
+> being true, so with `--allow-writes` the server binds to **127.0.0.1 only**
+> and you reach it through an ssh tunnel:
+>
+> ```sh
+> ssh -L 8080:127.0.0.1:8080 USER@THE_LAB_PC
+> ```
+>
+> The check is enforced on the server too, not just by hiding the buttons:
+> without the flag, `/control` answers 403. A stale browser tab cannot poke
+> the chip either.
 
 ---
 

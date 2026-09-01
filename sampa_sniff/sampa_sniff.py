@@ -33,6 +33,7 @@ import argparse
 import collections
 import errno
 import math
+import os
 import re
 import socket
 import struct
@@ -253,6 +254,70 @@ def decode(header, samples, mode):
     return ("raw", [(0, samples, sum(samples))])
 
 
+def parse_duration(text):
+    """Turn a duration written by a human into seconds.
+
+    Accepts the two shapes a scientist actually writes:
+
+        HH:MM:SS   MM:SS      clock style, e.g. 01:30:00 or 90:00
+        1h30m      45s   2h   suffix style, any combination
+
+    A bare number is read as seconds. Returns a float, or raises ValueError
+    with a message that says what was wrong.
+    """
+    t = str(text).strip().lower()
+    if not t:
+        raise ValueError("empty duration")
+
+    if ":" in t:
+        parts = t.split(":")
+        if len(parts) > 3:
+            raise ValueError("too many ':' in %r, use HH:MM:SS" % text)
+        try:
+            nums = [float(p) for p in parts]
+        except ValueError:
+            raise ValueError("%r is not a HH:MM:SS duration" % text)
+        secs = 0.0
+        for n in nums:                      # 1:30 is 1 min 30 s, 1:0:0 is 1 h
+            secs = secs * 60.0 + n
+        return secs
+
+    m = re.findall(r"([0-9]*\.?[0-9]+)\s*([hms]?)", t)
+    if not m or "".join(a + b for a, b in m) != t.replace(" ", ""):
+        raise ValueError("%r is not a duration; use 90s, 5m, 1h30m or 01:30:00"
+                         % text)
+    mult = {"h": 3600.0, "m": 60.0, "s": 1.0, "": 1.0}
+    return sum(float(n) * mult[u] for n, u in m)
+
+
+def human_duration(secs):
+    """Seconds as 1h 30m 00s, for the summary."""
+    secs = int(round(secs))
+    h, rest = divmod(secs, 3600)
+    m, sc = divmod(rest, 60)
+    if h:
+        return "%dh %02dm %02ds" % (h, m, sc)
+    if m:
+        return "%dm %02ds" % (m, sc)
+    return "%ds" % sc
+
+
+def run_filename(start, end=None, ext=".bin"):
+    """Name a capture after the wall-clock times of the experiment.
+
+        sampa_2026-09-01_1430-00_to_1435-00.bin
+
+    The scientist asked for the start and end times to be readable in the
+    name itself. The date goes first so that an ls sorts chronologically.
+    While the run is in progress the end is unknown, so the file is opened
+    as ..._to_RUNNING and renamed when it closes: that way the name always
+    reflects the real end, even if the run was cut short with Ctrl-C.
+    """
+    a = start.strftime("%Y-%m-%d_%H%M-%S")
+    b = end.strftime("%H%M-%S") if end is not None else "RUNNING"
+    return "sampa_{0}_to_{1}{2}".format(a, b, ext)
+
+
 # Time scales. The chip reads every channel once per 4000 bunch crossings
 # and the bx clock is 40 MHz, i.e. one readout every 100 us. Inside that
 # window the samples run at 10 MS/s, one every 0.1 us. If the bx clock or the
@@ -436,14 +501,30 @@ class CsvWriter(object):
                 self.path_clusters, self.filas_clusters))
 
 
-def recv_exactly(sock, nbytes):
-    """Read exactly nbytes. Returns None if the server closes."""
+# Returned by recv_exactly when the socket timed out but the run is not over
+# yet, so the caller should look at its own clock and come back. It is a
+# distinct object from None on purpose: None means the server closed, and
+# confusing the two would end a timed capture at the first quiet second.
+TIMEOUT = object()
+
+
+def recv_exactly(sock, nbytes, deadline=None):
+    """Read exactly nbytes. Returns None if the server closes.
+
+    With a deadline (a monotonic timestamp), a socket timeout is not the end
+    of anything: the partial data already read is kept and we keep waiting
+    until the deadline passes, at which point TIMEOUT is returned. That is
+    what lets a timed capture sit through a silent stretch without either
+    giving up or overrunning its stop time.
+    """
     buf = b""
     while len(buf) < nbytes:
         try:
             chunk = sock.recv(nbytes - len(buf))
         except socket.timeout:
-            return None
+            if deadline is not None and time.monotonic() < deadline:
+                continue          # keep the partial buffer and keep waiting
+            return TIMEOUT if deadline is not None else None
         except socket.error as e:
             if e.errno == errno.EINTR:
                 continue
@@ -484,9 +565,14 @@ class TeeSource(object):
     includes the headers and stays aligned with the stream.
     """
 
-    def __init__(self, fuente, path):
+    def __init__(self, fuente, path, rename_on_close=None):
         self.fuente = fuente
         self.path = path
+        # When the name is meant to carry the end time of the experiment we
+        # cannot know it yet, so the file is opened under a provisional name
+        # and renamed on close. rename_on_close is a callable taking the
+        # end time and returning the final path.
+        self.rename_on_close = rename_on_close
         self.f = open(path, "wb")
         self.bytes = 0
         self._sin_vaciar = 0
@@ -510,10 +596,21 @@ class TeeSource(object):
     def close(self):
         self.f.close()
         self.fuente.close()
+        if self.rename_on_close is not None:
+            final = self.rename_on_close(datetime.datetime.now())
+            try:
+                os.replace(self.path, final)
+                self.path = final
+            except OSError as e:
+                # Losing the nice name is annoying; losing the data is not
+                # acceptable. Keep the file where it is and say so.
+                print("")
+                print("could not rename the capture: {0}".format(e))
+                print("  the data is safe in {0}".format(self.path))
         print("")
         print("raw saved: {0}  ({1} bytes)".format(self.path, self.bytes))
         print("  it can be reprocessed with:  "
-              "python3 sampa_sniff.py -f {0} --csv PREFIJO".format(self.path))
+              "python3 sampa_sniff.py -f {0} --csv PREFIX".format(self.path))
 
 
 class Stats(object):
@@ -661,6 +758,30 @@ class Board(object):
             return "", err or "ssh returned {0}".format(p.returncode)
         return out, ""
 
+    def run_cmd(self, *argv):
+        """Run one command on the board and return (stdout, error).
+
+        Used for sampa_cfg, so the receiver can configure the chip without
+        the operator having to open a second ssh session. It is deliberately
+        NOT cached: these are writes, and a write must happen when asked.
+        """
+        cmd = ["ssh", "-o", "BatchMode=yes",
+               "-o", "StrictHostKeyChecking=accept-new",
+               "-o", "ConnectTimeout=5", self.target] + list(argv)
+        try:
+            p = subprocess.run(cmd, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, timeout=self.timeout)
+        except FileNotFoundError:
+            return "", "cannot find the 'ssh' program on this machine"
+        except subprocess.TimeoutExpired:
+            return "", "the board did not answer in {0:.0f} s".format(self.timeout)
+        except Exception as e:                      # pragma: no cover
+            return "", "could not launch ssh: {0}".format(e)
+        out = p.stdout.decode("utf-8", "replace")
+        if p.returncode != 0:
+            return out, out.strip() or "the command returned {0}".format(p.returncode)
+        return out, ""
+
     def text(self):
         """The last dump, refreshed at most every 'every' seconds."""
         with self.lock:
@@ -729,6 +850,111 @@ def parse_daqstat(text):
     return d
 
 
+# --------------------------------------------------------------- zero sup ---
+#
+# Zero suppression is configured on the CHIP, not in this receiver, and the
+# registers do not say what they mean:
+#
+#   ZSTHR  (channel 0x09, 12 bits)  the threshold, but in QUARTERS of an ADC
+#                                   count -- the spec calls it "2 bit
+#                                   precision". A threshold of 100 counts is
+#                                   written as 400.
+#   ZSCFG  (channel 0x0B,  9 bits)  [1:0] glitch filter, [4:2] post-samples,
+#                                   [6:5] pre-samples, [8] raw output of the
+#                                   ZSU, which bypasses suppression.
+#   VACFG  (global  0x0D,  bit 1)   raw data enable. While this is 1 the chip
+#                                   sends whole windows and the threshold has
+#                                   no effect at all.
+#
+# Getting any one of those three wrong looks exactly like "zero suppression
+# does not work". So the operator gives a threshold in ADC counts and how many
+# samples to keep around each pulse, and everything else is worked out here.
+
+ZS_MAX_COUNTS = 1023.75      # ZSTHR is 12 bits of quarter-counts
+ZS_MAX_PRE = 3               # ZSCFG[6:5]
+ZS_MAX_POST = 7              # ZSCFG[4:2]
+
+
+def zs_registers(threshold, pre=1, post=2, glitch=0):
+    """Turn a human description into (ZSTHR, ZSCFG) register values.
+
+    threshold is in ADC counts and may be fractional to a quarter; pre and
+    post are counts of samples kept before and after the pulse.
+    """
+    if threshold < 0:
+        raise ValueError("the threshold cannot be negative")
+    if threshold > ZS_MAX_COUNTS:
+        raise ValueError("threshold %g is above the maximum of %g ADC counts"
+                         % (threshold, ZS_MAX_COUNTS))
+    if not 0 <= pre <= ZS_MAX_PRE:
+        raise ValueError("pre-samples must be 0 to %d" % ZS_MAX_PRE)
+    if not 0 <= post <= ZS_MAX_POST:
+        raise ValueError("post-samples must be 0 to %d" % ZS_MAX_POST)
+    if not 0 <= glitch <= 3:
+        raise ValueError("the glitch filter must be 0 to 3")
+
+    quarters = int(round(threshold * 4))
+    zsthr = min(quarters, 0xFFF)
+    zscfg = (glitch & 0x3) | ((post & 0x7) << 2) | ((pre & 0x3) << 5)
+    return zsthr, zscfg
+
+
+def zs_apply(board, threshold, pre=1, post=2, glitch=0, chip=0, cfg="./sampa_cfg"):
+    """Configure zero suppression on every channel of the chip.
+
+    Returns (list of lines describing what was done, error or "").
+    Pass threshold=None to switch suppression OFF, which means putting the
+    chip back into raw mode.
+    """
+    log = []
+
+    # VACFG bit 1 is raw-data enable, and it wins over any threshold. It is a
+    # global register with no bitfield command, so read-modify-write.
+    out, err = board.run_cmd(cfg, "read", str(chip), "VACFG")
+    if err:
+        return log, "could not read VACFG: " + err
+    m = re.search(r"0x([0-9A-Fa-f]+)", out)
+    if not m:
+        return log, "could not read VACFG back: " + out.strip()
+    vacfg = int(m.group(1), 16)
+
+    if threshold is None:
+        nuevo = vacfg | 0x02                     # raw on -> suppression off
+        if nuevo != vacfg:
+            _, err = board.run_cmd(cfg, "write", str(chip), "VACFG",
+                                   "0x%02X" % nuevo)
+            if err:
+                return log, "could not write VACFG: " + err
+        log.append("zero suppression OFF (VACFG raw bit set, whole windows)")
+        return log, ""
+
+    zsthr, zscfg = zs_registers(threshold, pre, post, glitch)
+
+    _, err = board.run_cmd(cfg, "writech", str(chip), "all", "ZSTHR",
+                           str(zsthr))
+    if err:
+        return log, "could not write ZSTHR: " + err
+    log.append("ZSTHR  = %d  (threshold %g ADC counts, x4 as the chip wants)"
+               % (zsthr, threshold))
+
+    _, err = board.run_cmd(cfg, "writech", str(chip), "all", "ZSCFG",
+                           str(zscfg))
+    if err:
+        return log, "could not write ZSCFG: " + err
+    log.append("ZSCFG  = 0x%03X  (%d pre-samples, %d post-samples, glitch %d)"
+               % (zscfg, pre, post, glitch))
+
+    nuevo = vacfg & ~0x02                        # raw off -> suppression on
+    if nuevo != vacfg:
+        _, err = board.run_cmd(cfg, "write", str(chip), "VACFG",
+                               "0x%02X" % nuevo)
+        if err:
+            return log, "could not write VACFG: " + err
+        log.append("VACFG  = 0x%02X (raw bit cleared, suppression takes effect)"
+                   % nuevo)
+    return log, ""
+
+
 class Panel(object):
     """Serve the live view over HTTP, on a separate thread.
 
@@ -740,7 +966,7 @@ class Panel(object):
     threads only read it under a lock.
     """
 
-    def __init__(self, port, mode, title, board=None):
+    def __init__(self, port, mode, title, board=None, control=None):
         try:
             import sampa_view
         except ImportError:
@@ -754,6 +980,9 @@ class Panel(object):
                 "  Without --web this program works on its own.")
         self.sampa_view = sampa_view
         self.board = board
+        # Callable(dict) -> (list of lines, error). None means the page is
+        # read-only, which is the default and the safe state.
+        self.control = control
         self.acc = sampa_view.Accumulator(mode, title)
         self.lock = threading.Lock()
         self.port = port
@@ -766,13 +995,13 @@ class Panel(object):
 
             def do_GET(self):
                 path = self.path.split("?")[0].rstrip("/") or "/"
-                if path == "/vivo":
+                if path == "/live":
                     panel.websocket(self)
                     return
                 if path == "/":
                     body = panel.html().encode("utf-8")
                     type = "text/html; charset=utf-8"
-                elif path == "/datos":
+                elif path == "/data":
                     body = panel.json().encode("utf-8")
                     type = "application/json"
                 elif path == "/daq":
@@ -791,6 +1020,48 @@ class Panel(object):
                 except socket.error:
                     pass          # the browser left mid-write; never mind
 
+            def do_POST(self):
+                path = self.path.split("?")[0].rstrip("/") or "/"
+                if path != "/control":
+                    self.send_error(404)
+                    return
+                if panel.control is None:
+                    # Read-only is the default. Say why rather than 404, so
+                    # the page can explain it instead of looking broken.
+                    self.responde(403, {"ok": False, "error":
+                        "this view is read-only. Restart sampa_sniff with "
+                        "--allow-writes to change the chip from here."})
+                    return
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    peticion = json.loads(self.rfile.read(n) or b"{}")
+                except Exception as e:
+                    self.responde(400, {"ok": False,
+                                        "error": "bad request: %s" % e})
+                    return
+                # Anything the handler raises becomes an error the page can
+                # show. Letting it escape would kill the request thread and
+                # leave the browser hanging on a dropped connection, with no
+                # clue as to what went wrong.
+                try:
+                    lineas, err = panel.control(peticion)
+                except Exception as e:
+                    lineas, err = [], "%s: %s" % (type(e).__name__, e)
+                self.responde(200 if not err else 500,
+                              {"ok": not err, "log": lineas, "error": err})
+
+            def responde(self, code, obj):
+                body = json.dumps(obj).encode("utf-8")
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                try:
+                    self.wfile.write(body)
+                except socket.error:
+                    pass
+
             def log_message(self, *_a):
                 pass              # no line per request: there are thousands
 
@@ -806,7 +1077,12 @@ class Panel(object):
                     return
                 ThreadingHTTPServer.handle_error(self, request, client_address)
 
-        self.srv = Servidor(("", port), Manejador)
+        # A read-only view can be served on every interface: the worst a
+        # visitor can do is look. As soon as it can write to the chip that
+        # stops being true, so it binds to loopback only and you reach it
+        # through an ssh tunnel, like any other private service.
+        self.host = "127.0.0.1" if control is not None else ""
+        self.srv = Servidor((self.host, port), Manejador)
         self.srv.daemon_threads = True
         self.thread = threading.Thread(target=self.srv.serve_forever)
         self.thread.daemon = True
@@ -839,6 +1115,10 @@ class Panel(object):
             return json.dumps({"active": False})
         raw, error = self.board.text()
         d = {"active": True, "target": self.board.target,
+             # The page uses this to decide whether to show the controls at
+             # all. It is a convenience, not the security boundary: /control
+             # checks for itself and answers 403 when writes are off.
+             "writable": self.control is not None,
              "raw": raw, "error": error}
         if raw:
             d.update(parse_daqstat(raw))
@@ -944,6 +1224,27 @@ class Panel(object):
 
 
 def run(args):
+    # Zero suppression is set on the chip, so it has to happen before we take
+    # the single client slot on port 1000: if it fails we want to fail here,
+    # not with the acquisition already half started.
+    if args.zs is not None or args.zs_off:
+        objetivo = args.board or "root@{0}".format(args.host)
+        tablero = Board(objetivo, args.daqstat)
+        print("configuring zero suppression on {0} ...".format(objetivo))
+        lineas, err = zs_apply(tablero,
+                               None if args.zs_off else args.zs,
+                               args.zs_pre, args.zs_post,
+                               cfg=args.sampa_cfg)
+        for l in lineas:
+            print("  " + l)
+        if err:
+            print("  FAILED: {0}".format(err))
+            print("  nothing was captured; the chip may be half configured.")
+            print("  Check with:  ssh {0} {1} dumpch 0 0"
+                  .format(objetivo, args.sampa_cfg))
+            return 1
+        print("")
+
     if args.file:
         print("Reading capture {0} ...".format(args.file))
         try:
@@ -985,18 +1286,36 @@ def run(args):
         # timeout 0 = no limit: the receiver waits indefinitely. That is what
         # live monitoring needs, where minutes can go by between bursts
         # without a single byte.
-        sock.settimeout(args.timeout if args.timeout > 0 else None)
+        espera = args.timeout if args.timeout > 0 else None
+        if args.duration is not None:
+            # The deadline is only checked between packets, so with no data
+            # arriving a blocking recv would sail straight past it. Waking up
+            # at least once a second keeps the stop time exact even during a
+            # silent stretch.
+            espera = 1.0 if espera is None else min(espera, 1.0)
+        sock.settimeout(espera)
         print("Connected. Ctrl-C to stop.")
         print("")
 
-    if args.save:
+    if args.save is not None:
+        # --save with no name: build one from the wall-clock times of the run,
+        # which is what the scientist asked for. The end time is not known
+        # yet, so the file is opened as ..._to_RUNNING and renamed on close.
+        renombrar = None
+        destino = args.save
+        if not destino:
+            inicio = datetime.datetime.now()
+            destino = run_filename(inicio)
+            renombrar = lambda fin: run_filename(inicio, fin)
         try:
-            sock = TeeSource(sock, args.save)
+            sock = TeeSource(sock, destino, renombrar)
         except IOError as e:
-            print("  could not create {0}: {1}".format(args.save, e))
+            print("  could not create {0}: {1}".format(destino, e))
             sock.close()
             return 1
-        print("saving the raw stream to {0} ...".format(args.save))
+        print("saving the raw stream to {0} ...".format(destino))
+        if renombrar is not None:
+            print("  it will be renamed with the end time when the run finishes")
 
     # Raw mode: no interpretation at all, just show what arrives
     if args.raw:
@@ -1018,10 +1337,48 @@ def run(args):
             # the same box.
             target = args.board or "root@{0}".format(args.host)
             board = Board(target, args.daqstat)
+
+        control = None
+        if args.allow_writes:
+            if board is None:
+                print("  --allow-writes needs --board: there is no way to "
+                      "reach the chip without it")
+                return 1
+
+            def control(peticion, _b=board, _a=args):
+                """Apply what the page asked for. Returns (lines, error)."""
+                que = peticion.get("what")
+                if que == "zs":
+                    umbral = peticion.get("threshold")
+                    if umbral in (None, "", "off"):
+                        return zs_apply(_b, None, cfg=_a.sampa_cfg)
+                    try:
+                        umbral = float(umbral)
+                        pre = int(peticion.get("pre", _a.zs_pre))
+                        post = int(peticion.get("post", _a.zs_post))
+                    except (TypeError, ValueError):
+                        return [], "threshold, pre and post must be numbers"
+                    try:
+                        zs_registers(umbral, pre, post)
+                    except ValueError as e:
+                        return [], str(e)
+                    return zs_apply(_b, umbral, pre, post, cfg=_a.sampa_cfg)
+                if que == "acquire":
+                    try:
+                        n = int(peticion.get("packets", 2048))
+                    except (TypeError, ValueError):
+                        return [], "the packet count must be a number"
+                    if not 0 < n <= 65535:
+                        return [], "packets must be between 1 and 65535"
+                    out, err = _b.run_cmd(_a.daqstat, "acquire", str(n))
+                    if err:
+                        return [], err
+                    return [out.strip() or "acquire %d sent" % n], ""
+                return [], "unknown request: %r" % (que,)
         try:
             panel = Panel(args.web, args.mode,
                           args.file or "{0}:{1}".format(args.host, args.port),
-                          board)
+                          board, control)
         except MissingFile as e:
             print("")
             print("  {0}".format(e))
@@ -1041,9 +1398,22 @@ def run(args):
         print("writing {0}_packets.csv ...".format(args.csv))
     readout = -1
     bx_ant = None
+    # Wall-clock deadline. Measured with a monotonic clock so that an NTP
+    # step or a daylight-saving change in the middle of a long run cannot
+    # stretch or shorten the experiment.
+    deadline = None
+    if args.duration is not None:
+        deadline = time.monotonic() + args.duration
     try:
         while args.count == 0 or stats.packets < args.count:
-            head = recv_exactly(sock, 8)
+            if deadline is not None and time.monotonic() >= deadline:
+                print("")
+                print("capture finished: the {0} requested have elapsed"
+                      .format(human_duration(args.duration)))
+                break
+            head = recv_exactly(sock, 8, deadline)
+            if head is TIMEOUT:
+                continue          # the deadline check at the top decides
             if head is None:
                 print("")
                 if args.timeout > 0:
@@ -1061,8 +1431,8 @@ def run(args):
 
             payload = b""
             if header.len32:
-                payload = recv_exactly(sock, header.len32 * 4)
-                if payload is None:
+                payload = recv_exactly(sock, header.len32 * 4, deadline)
+                if payload is TIMEOUT or payload is None:
                     print("conexion cortada a mitad de un packet")
                     break
             words = list(struct.unpack("<{0}I".format(header.len32), payload)) \
@@ -1176,13 +1546,37 @@ def main(argv=None):
                         "on the board over ssh. With no value it uses "
                         "root@<host>. --board is not used for the data, which "
                         "still comes in over port 1000")
+    p.add_argument("--zs", metavar="COUNTS",
+                   help="configure zero suppression on the chip before "
+                        "capturing. Give the threshold in ADC counts (e.g. "
+                        "--zs 100), or 'off' to send whole windows. The chip "
+                        "wants quarter-counts and a packed config register; "
+                        "that is worked out for you. Needs --board")
+    p.add_argument("--zs-pre", type=int, default=1, metavar="N",
+                   help="samples kept before each pulse, 0 to 3 (default 1)")
+    p.add_argument("--zs-post", type=int, default=2, metavar="N",
+                   help="samples kept after each pulse, 0 to 7 (default 2)")
+    p.add_argument("--allow-writes", action="store_true",
+                   help="let the web page change the chip (zero suppression) "
+                        "and the capture duration. OFF by default: without it "
+                        "the page can only look. With it, the server binds to "
+                        "127.0.0.1 only, so reach it through an ssh tunnel")
+    p.add_argument("--sampa-cfg", default="./sampa_cfg", metavar="PATH",
+                   help="path to sampa_cfg on the board (default ./sampa_cfg)")
     p.add_argument("--daqstat", default="./daqstat", metavar="PATH",
                    help="path to daqstat on the board (default ./daqstat, "
                         "i.e. /home/root/daqstat)")
-    p.add_argument("--save", metavar="FILE",
+    p.add_argument("-d", "--duration", metavar="TIME",
+                   help="capture for exactly this long, then stop. Accepts "
+                        "HH:MM:SS (01:30:00), MM:SS (90:00) or suffixes "
+                        "(90s, 5m, 1h30m). The clock is monotonic, so an NTP "
+                        "step mid-run cannot stretch the experiment")
+    p.add_argument("--save", metavar="FILE", nargs="?", const="",
                    help="also save the stream exactly as it arrives, "
                         "uninterpreted. This is the lossless copy and is much "
-                        "smaller than the CSV files; reprocess it with -f")
+                        "smaller than the CSV files; reprocess it with -f. "
+                        "With no name given, one is built from the start and "
+                        "end times of the run")
     p.add_argument("-f", "--file", metavar="FILE",
                    help="read a capture from disk instead of the network "
                         "(e.g. the one 'nc' makes on the board)")
@@ -1191,11 +1585,38 @@ def main(argv=None):
                         "listening until Ctrl-C (default 5, or 0 when --web "
                         "is used)")
     args = p.parse_args(argv)
+    if args.zs is not None or getattr(args, "zs_off", False):
+        if args.board is None:
+            p.error("--zs needs --board: the threshold is set on the chip, "
+                    "over ssh, not in this receiver")
+    if args.zs is not None:
+        if str(args.zs).strip().lower() in ("off", "none", "raw"):
+            args.zs = None
+            args.zs_off = True
+        else:
+            try:
+                args.zs = float(args.zs)
+            except ValueError:
+                p.error("--zs takes a threshold in ADC counts, or 'off'")
+            args.zs_off = False
+            try:
+                zs_registers(args.zs, args.zs_pre, args.zs_post)
+            except ValueError as e:
+                p.error(str(e))
+    else:
+        args.zs_off = False
+    if args.duration is not None:
+        try:
+            args.duration = parse_duration(args.duration)
+        except ValueError as e:
+            p.error(str(e))
+        if args.duration <= 0:
+            p.error("--duration must be greater than zero")
     if args.timeout is None:
         # Vigilar en vivo no tiene sentido con un limite de tiempo: entre
         # tandas puede no llegar nada durante minutos.
         args.timeout = 0.0 if args.web else 5.0
-    if args.save and args.file:
+    if args.save is not None and args.file:
         # Copying the file onto itself would truncate it to zero, and even
         # with another name it adds nothing: the raw stream is the input.
         p.error("--save makes no sense with -f: the input file already "

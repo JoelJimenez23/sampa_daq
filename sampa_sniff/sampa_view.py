@@ -223,6 +223,26 @@ td.bad{color:var(--accent);font-weight:600}
                border:1px solid var(--line);border-radius:4px;padding:10px}
 #daq-raw summary{cursor:pointer;color:var(--soft)}
 
+/* --- controls that write to the chip --- */
+#control{display:none;margin-top:14px;padding:12px 14px;background:var(--paper);
+         border:1px solid var(--line);border-radius:6px}
+#control.on{display:block}
+#control h3{margin:0 0 4px;font-size:13px;font-weight:600}
+#control .fila{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;
+               margin-top:10px}
+#control label{font-size:12px;color:var(--soft);display:block}
+#control input{width:82px;padding:4px 6px;font-size:13px;font-family:inherit;
+               background:var(--bg);color:var(--ink);border:1px solid var(--line);
+               border-radius:4px}
+#control button{background:none;border:1px solid var(--line);color:var(--ink);
+                border-radius:5px;padding:5px 12px;font-size:12px;cursor:pointer;
+                font-family:inherit}
+#control button:hover:not(:disabled){border-color:var(--trace);color:var(--trace)}
+#control button:disabled{opacity:.5;cursor:default}
+#control .echo{margin-top:10px;font-family:ui-monospace,Menlo,Consolas,monospace;
+              font-size:11px;line-height:1.5;white-space:pre-wrap}
+#control .echo.err{color:var(--accent)}
+
 /* --- modal window --- */
 #veil{position:fixed;inset:0;background:var(--veil);display:none;z-index:50;
       align-items:center;justify-content:center;padding:20px}
@@ -306,6 +326,30 @@ refresca solo. Esto no viene por el puerto 1000: es una consulta aparte.</p>
 <div id="daq-table"></div>
 <div id="daq-notes"></div>
 <details id="daq-raw"><summary>show the raw dump</summary><pre></pre></details>
+
+<div id="control">
+<h3>Zero suppression</h3>
+<p class="sub">The threshold is in <b>ADC counts</b>, the natural unit. The chip
+wants quarter-counts in a 12-bit register and the pre/post samples packed into
+another one; that is worked out for you. Setting this writes to the chip, to
+every channel at once.</p>
+<div class="fila">
+  <div><label for="zs-thr">threshold (counts)</label>
+       <input id="zs-thr" type="number" min="0" max="1023.75" step="0.25" value="100"></div>
+  <div><label for="zs-pre">pre-samples (0-3)</label>
+       <input id="zs-pre" type="number" min="0" max="3" step="1" value="1"></div>
+  <div><label for="zs-post">post-samples (0-7)</label>
+       <input id="zs-post" type="number" min="0" max="7" step="1" value="2"></div>
+  <button id="btZs">apply</button>
+  <button id="btZsOff">turn off</button>
+</div>
+<div class="fila">
+  <div><label for="acq-n">acquire, packets per link</label>
+       <input id="acq-n" type="number" min="1" max="65535" step="1" value="2048"></div>
+  <button id="btAcq">start a burst</button>
+</div>
+<div class="echo" id="control-echo"></div>
+</div>
 </div>
 
 </div>
@@ -894,6 +938,58 @@ function montar(nuevo) {
 }
 
 
+
+/* ---------- controls that write to the chip ---------- */
+
+/* Only wired up when the receiver was started with --allow-writes; otherwise
+   the block stays hidden and the page is what it has always been, a viewer.
+   The server enforces this too: without the flag /control answers 403. Doing
+   it in both places means a stale tab cannot poke the chip either. */
+function startControls() {
+  const box = document.getElementById("control");
+  const echo = document.getElementById("control-echo");
+  const buttons = ["btZs", "btZsOff", "btAcq"].map(i => document.getElementById(i));
+
+  function say(txt, err) {
+    echo.textContent = txt;
+    echo.className = "echo" + (err ? " err" : "");
+  }
+
+  function send(body, doing) {
+    buttons.forEach(b => b.disabled = true);
+    say(doing + "…", false);
+    fetch("control", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    })
+      .then(r => r.json().then(d => ({code: r.status, d})))
+      .then(({code, d}) => {
+        if (d.ok) say((d.log || []).join("\\n") || "done", false);
+        else say("failed: " + (d.error || ("HTTP " + code)), true);
+      })
+      .catch(e => say("could not reach the receiver: " + e, true))
+      .finally(() => buttons.forEach(b => b.disabled = false));
+  }
+
+  const num = id => document.getElementById(id).value;
+
+  document.getElementById("btZs").onclick = () => send(
+    {what: "zs", threshold: num("zs-thr"),
+     pre: num("zs-pre"), post: num("zs-post")},
+    "writing the threshold to every channel");
+
+  document.getElementById("btZsOff").onclick = () => send(
+    {what: "zs", threshold: "off"},
+    "switching zero suppression off");
+
+  document.getElementById("btAcq").onclick = () => send(
+    {what: "acquire", packets: num("acq-n")},
+    "starting a burst");
+
+  box.classList.add("on");
+}
+
 /* ---------- board status (daqstat over ssh) ---------- */
 
 /* Only meaningful live: in a static page saved to disk there is nobody on
@@ -906,6 +1002,8 @@ function esc(t) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
 }
+
+let controlsUp = false;
 
 function startBoardPanel() {
   const box = document.getElementById("board");
@@ -923,6 +1021,7 @@ function startBoardPanel() {
   function draw(d) {
     if (!d.active) return;                 /* started without --board */
     box.classList.add("on");
+    if (d.writable && !controlsUp) { startControls(); controlsUp = true; }
 
     if (d.error) {
       resumen.innerHTML = "";
