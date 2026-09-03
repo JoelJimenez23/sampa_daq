@@ -244,6 +244,20 @@ td.bad{color:var(--accent);font-weight:600}
               font-size:11px;line-height:1.5;white-space:pre-wrap}
 #control .echo.err{color:var(--accent)}
 
+/* --- time scrubber --- */
+#scrub{display:none;margin:10px 0 4px;padding:10px 12px;background:var(--paper);
+       border:1px solid var(--line);border-radius:6px}
+#scrub.on{display:block}
+#scrub .fila{display:flex;align-items:center;gap:10px}
+#scrub input[type=range]{flex:1;accent-color:var(--trace);cursor:pointer}
+#scrub button{border:1px solid var(--line);background:none;color:var(--ink);
+              border-radius:5px;padding:3px 10px;font-size:12px;cursor:pointer;
+              font-family:inherit}
+#scrub button:hover{border-color:var(--trace);color:var(--trace)}
+#scrub .donde{font-size:12px;color:var(--soft);font-variant-numeric:tabular-nums;
+              min-width:16em;text-align:right}
+#scrub .donde b{color:var(--ink);font-weight:600}
+
 /* --- recording --- */
 #rec{display:none;margin-top:14px;padding:12px 14px;background:var(--paper);
      border:1px solid var(--line);border-radius:6px}
@@ -327,6 +341,14 @@ kbd{font-family:inherit;border:1px solid var(--line);border-radius:3px;
 <p class="sub">The highest-amplitude window of each channel. x axis: sample
 number (0.1 &micro;s each). The thin line is the baseline.
 <b>Pulsa cualquier recuadro stop verlo en grande.</b></p>
+<div id="scrub">
+  <div class="fila">
+    <button id="scPrev" title="previous readout">&larr;</button>
+    <input id="scRange" type="range" min="0" max="0" value="0" step="1">
+    <button id="scNext" title="next readout">&rarr;</button>
+    <span class="donde" id="scDonde"></span>
+  </div>
+</div>
 <div class="grid" id="g-wave"></div>
 
 <h2>ADC value spectrum</h2>
@@ -926,6 +948,8 @@ function montar(nuevo) {
     cel.k = k;
     cel.div.classList.toggle("off", k.pct === 0);
     if (type === "wave") {
+      /* While browsing the run, the cells belong to the scrubber. */
+      if (modoOnda === "browse") continue;
       const v = k[modoOnda] || [];
       const rd = modoOnda === "latest" ? k.latest_readout : k.wave_readout;
       const lecAntes = antes && (modoOnda === "latest" ? antes.latest_readout
@@ -984,6 +1008,78 @@ function montar(nuevo) {
 }
 
 
+
+
+/* ---------- moving through the whole run ---------- */
+
+/* The experiment never fits in the page -- 38 seconds is some 48 GB of
+   samples -- so the file stays on the receiver and we ask for the readout
+   being looked at. Only available when reading a saved capture (-f). */
+let VENTANA = null;          /* {rd, channels} currently on screen */
+
+function startScrub() {
+  const caja = document.getElementById("scrub");
+  const barra = document.getElementById("scRange");
+  const donde = document.getElementById("scDonde");
+  let total = 0, pidiendo = false, pendiente = null;
+
+  function texto(rd, t_us) {
+    const ms = (t_us / 1000);
+    donde.innerHTML = "readout <b>" + rd + "</b> of " + (total - 1)
+                    + " &middot; <b>" + ms.toFixed(1) + "</b> ms";
+  }
+
+  function pinta(d) {
+    if (!d.channels) return;
+    VENTANA = d;
+    modoOnda = "browse";
+    for (let ch = 0; ch < 32; ch++) {
+      const cel = cells.wave[ch];
+      const v = d.channels[String(ch)] || [];
+      cel.wave = v.length ? v : null;
+      cel.dirty = true;
+      cel.sp.textContent = v.length ? "rd " + d.rd : "no data";
+    }
+    /* If the big window is open on a waveform, move it too. */
+    if (V.type === "wave") {
+      const v = d.channels[String(V.ch)] || [];
+      V.pts = v.map((y, i) => [i, y]);
+      resetZoom(); draw();
+    }
+    texto(d.rd, d.t_us);
+  }
+
+  function pide(rd) {
+    if (pidiendo) { pendiente = rd; return; }   /* coalesce a fast drag */
+    pidiendo = true;
+    fetch("window?rd=" + rd, {cache: "no-store"})
+      .then(r => r.json())
+      .then(d => {
+        if (d.seekable === false) { caja.classList.remove("on"); return; }
+        if (d.total && d.total !== total) {
+          total = d.total;
+          barra.max = String(total - 1);
+        }
+        caja.classList.add("on");
+        pinta(d);
+      })
+      .catch(() => {})
+      .finally(() => {
+        pidiendo = false;
+        if (pendiente !== null) { const n = pendiente; pendiente = null; pide(n); }
+      });
+  }
+
+  barra.oninput = () => pide(+barra.value);
+  const salta = n => {
+    barra.value = String(Math.max(0, Math.min(total - 1, (+barra.value) + n)));
+    pide(+barra.value);
+  };
+  document.getElementById("scPrev").onclick = () => salta(-1);
+  document.getElementById("scNext").onclick = () => salta(+1);
+  /* Arrow keys, once the slider has focus, come free with input[type=range]. */
+  pide(0);
+}
 
 /* ---------- controls that write to the chip ---------- */
 
@@ -1267,6 +1363,7 @@ if (LIVE) {
      an ssh round trip that can take seconds, or time out, so it must not
      hold the recording controls hostage. */
   startRecording();
+  startScrub();
   startBoardPanel();
 }
 

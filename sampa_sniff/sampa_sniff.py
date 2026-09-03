@@ -617,6 +617,104 @@ class TeeSource(object):
               "python3 sampa_sniff.py -f {0} --csv PREFIX".format(self.path))
 
 
+class Archive(object):
+    """Random access to a saved capture, by readout number.
+
+    The page can only ever hold one window at a time: a 38-second run is
+    twelve thousand million samples, some 48 GB as JSON. So instead of
+    shipping the experiment to the browser, the file stays here and the
+    browser asks for the readout it wants to look at.
+
+    Indexing is one sequential pass over the headers -- payloads are skipped,
+    not read -- which is disk-bound and happens once, when the page opens.
+    """
+
+    def __init__(self, path, mode="auto"):
+        self.path = path
+        self.mode = mode
+        self.offsets = []       # byte offset of the first packet of readout i
+        self.bxs = []           # the bunch crossing of each readout
+        self.lock = threading.Lock()
+        self.f = None
+        self.error = ""
+        try:
+            self._index()
+            self.f = io.open(path, "rb")
+        except (IOError, OSError) as e:
+            self.error = "could not read {0}: {1}".format(path, e)
+
+    def _index(self):
+        """Walk the headers once and note where each readout starts."""
+        CHUNK = 1 << 22
+        with io.open(self.path, "rb") as f:
+            buf = b""
+            base = 0            # file offset of buf[0]
+            i = 0               # cursor inside buf
+            bx_prev = None
+            while True:
+                if len(buf) - i < 8:
+                    trozo = f.read(CHUNK)
+                    if not trozo:
+                        break
+                    buf = buf[i:] + trozo
+                    base += i
+                    i = 0
+                    if len(buf) < 8:
+                        break
+                w0, w1 = struct.unpack("<II", buf[i:i + 8])
+                h = Header(w0, w1)
+                size = 8 + h.len32 * 4
+                if h.bunchcrossing != bx_prev:
+                    self.offsets.append(base + i)
+                    self.bxs.append(h.bunchcrossing)
+                    bx_prev = h.bunchcrossing
+                # The payload is skipped without being read: if it does not
+                # fit in the buffer, jump the file cursor instead of pulling
+                # megabytes we do not want.
+                if i + size <= len(buf):
+                    i += size
+                else:
+                    falta = (i + size) - len(buf)
+                    f.seek(falta, 1)
+                    base = base + len(buf) + falta
+                    buf = b""
+                    i = 0
+
+    def count(self):
+        return len(self.offsets)
+
+    def readout(self, n):
+        """The samples of every channel for one readout: {channel: [adc]}."""
+        if self.f is None:
+            return None, self.error or "no capture open"
+        if not 0 <= n < len(self.offsets):
+            return None, "readout %d is outside 0..%d" % (n, len(self.offsets) - 1)
+        fin = self.offsets[n + 1] if n + 1 < len(self.offsets) else None
+        with self.lock:
+            self.f.seek(self.offsets[n])
+            crudo = self.f.read((fin - self.offsets[n]) if fin else (1 << 20))
+        canales, i = {}, 0
+        while i + 8 <= len(crudo):
+            w0, w1 = struct.unpack("<II", crudo[i:i + 8])
+            h = Header(w0, w1)
+            size = 8 + h.len32 * 4
+            if i + size > len(crudo):
+                break
+            if fin is None and h.bunchcrossing != self.bxs[n]:
+                break                      # last readout: stop at the next one
+            words = list(struct.unpack("<%dI" % h.len32,
+                                       crudo[i + 8:i + size])) if h.len32 else []
+            muestras = unpack_samples(h, words)
+            _, clusters = decode(h, muestras, self.mode)
+            cuerpo = []
+            for _t0, trozo, _sum in clusters:
+                if trozo:
+                    cuerpo.extend(trozo)
+            canales[h.chanadd] = cuerpo
+            i += size
+        return canales, ""
+
+
 class Recorder(object):
     """A recording that can be started and stopped while the run is going.
 
@@ -1121,7 +1219,7 @@ class Panel(object):
     """
 
     def __init__(self, port, mode, title, board=None, control=None,
-                 recorder=None):
+                 recorder=None, archive=None):
         try:
             import sampa_view
         except ImportError:
@@ -1139,6 +1237,7 @@ class Panel(object):
         # read-only, which is the default and the safe state.
         self.control = control
         self.recorder = recorder
+        self.archive = archive
         self.acc = sampa_view.Accumulator(mode, title)
         self.lock = threading.Lock()
         self.port = port
@@ -1159,6 +1258,9 @@ class Panel(object):
                     type = "text/html; charset=utf-8"
                 elif path == "/data":
                     body = panel.json().encode("utf-8")
+                    type = "application/json"
+                elif path == "/window":
+                    body = panel.window(self.path).encode("utf-8")
                     type = "application/json"
                 elif path == "/rec":
                     body = json.dumps(
@@ -1270,6 +1372,36 @@ class Panel(object):
     def add(self, n, readout, header, samples, problem, nbytes):
         with self.lock:
             self.acc.add(n, readout, header, samples, problem, nbytes)
+
+    def window(self, url):
+        """One readout of the capture, so the page can scrub through time.
+
+        The whole experiment never leaves this machine: the browser asks for
+        the readout it is looking at and gets that one, which is a few tens
+        of kB rather than tens of gigabytes.
+        """
+        if self.archive is None:
+            return json.dumps({"seekable": False})
+        q = url.split("?", 1)[1] if "?" in url else ""
+        pedido = 0
+        for parte in q.split("&"):
+            if parte.startswith("rd="):
+                try:
+                    pedido = int(parte[3:])
+                except ValueError:
+                    pass
+        total = self.archive.count()
+        pedido = max(0, min(pedido, total - 1)) if total else 0
+        canales, err = self.archive.readout(pedido)
+        if err:
+            return json.dumps({"seekable": True, "total": total, "error": err})
+        return json.dumps({
+            "seekable": True, "total": total, "rd": pedido,
+            # Absolute microseconds from the start of the capture, the same
+            # scale the CSV files use.
+            "t_us": round(pedido * US_PER_READOUT, 1),
+            "channels": {str(k): v for k, v in canales.items()},
+        })
 
     def daq(self):
         """Board status, for the DAQ section of the page."""
@@ -1504,6 +1636,19 @@ def run(args):
         recorder = Recorder(sock, args.record_dir)
         sock = recorder
 
+    # Reading a saved capture: the page can then scrub through the whole run,
+    # because the file is right here and can be seeked.
+    archive = None
+    if args.web and args.file:
+        archive = Archive(args.file, args.mode)
+        if archive.error:
+            print("  {0}".format(archive.error))
+            archive = None
+        else:
+            print("indexed {0}: {1} readouts, {2:.1f} ms of physics"
+                  .format(args.file, archive.count(),
+                          archive.count() * US_PER_READOUT / 1000.0))
+
     panel = None
     if args.web:
         board = None
@@ -1577,7 +1722,7 @@ def run(args):
         try:
             panel = Panel(args.web, args.mode,
                           args.file or "{0}:{1}".format(args.host, args.port),
-                          board, control, recorder)
+                          board, control, recorder, archive)
         except MissingFile as e:
             print("")
             print("  {0}".format(e))
@@ -1623,7 +1768,8 @@ def run(args):
                     # closing: mentioning a timeout here was misleading.
                     print("sampa_server closed the connection")
                 if panel is not None:
-                    print("the live view is still up; Ctrl-C to quit")
+                    print("the live view stays up at http://localhost:{0}/"
+                          " -- Ctrl-C to quit".format(args.web))
                 break
             w0, w1 = struct.unpack("<II", head)
             header = Header(w0, w1)
@@ -1689,6 +1835,15 @@ def run(args):
                         " ".join(str(s) for s in shown),
                         " ..." if len(body) > len(shown) else "",
                         note))
+        # The stream is over, but the page is not: with -f this is the whole
+        # point -- index the capture, then browse it. Saying "the live view is
+        # still up" and exiting a line later was simply untrue.
+        if panel is not None:
+            try:
+                while True:
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                print("")
     except KeyboardInterrupt:
         print("")
     finally:
