@@ -613,6 +613,142 @@ class TeeSource(object):
               "python3 sampa_sniff.py -f {0} --csv PREFIX".format(self.path))
 
 
+class Recorder(object):
+    """A recording that can be started and stopped while the run is going.
+
+    TeeSource decides at launch whether it saves; this one is armed later,
+    from the page, which is what "set a duration and press record" needs.
+    It sits in the same place -- wrapping recv() -- so what lands on disk is
+    still the byte-for-byte stream, headers included.
+
+    The file is named after the experiment: when it started, when it ended
+    and how long it ran. The end is not known while recording, so it is
+    opened as ..._RECORDING and renamed on stop; that way the name always
+    describes what actually happened, even if the run was cut short.
+
+    recv() runs on the receive thread and start/stop on HTTP threads, so
+    every field that both touch is under the lock.
+    """
+
+    def __init__(self, source, directory="."):
+        self.source = source
+        self.directory = directory
+        self.lock = threading.Lock()
+        self.f = None
+        self.path = None
+        self.started = None       # datetime, for the name
+        self.deadline = None      # monotonic, None = until stopped by hand
+        self.duration = None      # seconds requested, None = open-ended
+        self.bytes = 0
+        self._unflushed = 0
+        self.last = None          # summary of the recording just finished
+
+    # -- naming -----------------------------------------------------------
+    @staticmethod
+    def _name(start, end=None, secs=None):
+        a = start.strftime("%Y-%m-%d_%H%M-%S")
+        if end is None:
+            return "sampa_{0}_RECORDING.bin".format(a)
+        return "sampa_{0}_to_{1}_{2}.bin".format(
+            a, end.strftime("%H%M-%S"),
+            human_duration(secs if secs is not None else
+                           (end - start).total_seconds()).replace(" ", ""))
+
+    # -- state, for the page ----------------------------------------------
+    def status(self):
+        with self.lock:
+            d = {"recording": self.f is not None, "last": self.last}
+            if self.f is not None:
+                d["path"] = os.path.basename(self.path)
+                d["bytes"] = self.bytes
+                d["elapsed"] = round(
+                    (datetime.datetime.now() - self.started).total_seconds(), 1)
+                d["duration"] = self.duration
+                if self.deadline is not None:
+                    d["left"] = max(0.0, round(self.deadline - time.monotonic(), 1))
+            return d
+
+    # -- control ----------------------------------------------------------
+    def start(self, seconds=None):
+        """Begin recording. seconds=None records until stopped."""
+        with self.lock:
+            if self.f is not None:
+                return [], "already recording into %s" % os.path.basename(self.path)
+            started = datetime.datetime.now()
+            path = os.path.join(self.directory, self._name(started))
+            try:
+                f = open(path, "wb")
+            except IOError as e:
+                return [], "could not create %s: %s" % (path, e)
+            self.f, self.path, self.started = f, path, started
+            self.bytes = self._unflushed = 0
+            self.duration = seconds
+            # Monotonic, so a clock step mid-run cannot stretch or shorten
+            # the experiment.
+            self.deadline = None if seconds is None else time.monotonic() + seconds
+            cuanto = ("for " + human_duration(seconds)) if seconds else "until stopped"
+            return ["recording %s" % cuanto,
+                    "writing %s" % os.path.basename(path)], ""
+
+    def stop(self, reason="stopped"):
+        with self.lock:
+            return self._stop_locked(reason)
+
+    def _stop_locked(self, reason):
+        if self.f is None:
+            return [], "not recording"
+        self.f.close()
+        end = datetime.datetime.now()
+        secs = (end - self.started).total_seconds()
+        final = os.path.join(self.directory,
+                             self._name(self.started, end, secs))
+        try:
+            os.replace(self.path, final)
+        except OSError as e:
+            # Losing the tidy name is a nuisance; losing the data is not.
+            final = self.path
+            reason += " (could not rename: %s)" % e
+        self.last = {"file": os.path.basename(final),
+                     "bytes": self.bytes,
+                     "seconds": round(secs, 1),
+                     "duration": human_duration(secs),
+                     "started": self.started.isoformat(timespec="seconds"),
+                     "ended": end.isoformat(timespec="seconds"),
+                     "why": reason}
+        lineas = ["%s after %s" % (reason, human_duration(secs)),
+                  "saved %s (%d bytes)" % (os.path.basename(final), self.bytes)]
+        self.f = self.path = self.started = None
+        self.deadline = self.duration = None
+        return lineas, ""
+
+    # -- the stream -------------------------------------------------------
+    def recv(self, nbytes):
+        data = self.source.recv(nbytes)
+        with self.lock:
+            if self.f is not None:
+                if data:
+                    self.f.write(data)
+                    self.bytes += len(data)
+                    self._unflushed += len(data)
+                    if self._unflushed >= 1 << 20:
+                        self.f.flush()
+                        self._unflushed = 0
+                # Checked here because this is the one place that runs
+                # constantly while data flows.
+                if self.deadline is not None and time.monotonic() >= self.deadline:
+                    self._stop_locked("finished the requested time")
+        return data
+
+    def settimeout(self, t):
+        self.source.settimeout(t)
+
+    def close(self):
+        with self.lock:
+            if self.f is not None:
+                self._stop_locked("stopped: the receiver is shutting down")
+        self.source.close()
+
+
 class Stats(object):
     def __init__(self):
         self.packets = 0
@@ -966,7 +1102,8 @@ class Panel(object):
     threads only read it under a lock.
     """
 
-    def __init__(self, port, mode, title, board=None, control=None):
+    def __init__(self, port, mode, title, board=None, control=None,
+                 recorder=None):
         try:
             import sampa_view
         except ImportError:
@@ -983,6 +1120,7 @@ class Panel(object):
         # Callable(dict) -> (list of lines, error). None means the page is
         # read-only, which is the default and the safe state.
         self.control = control
+        self.recorder = recorder
         self.acc = sampa_view.Accumulator(mode, title)
         self.lock = threading.Lock()
         self.port = port
@@ -1003,6 +1141,12 @@ class Panel(object):
                     type = "text/html; charset=utf-8"
                 elif path == "/data":
                     body = panel.json().encode("utf-8")
+                    type = "application/json"
+                elif path == "/rec":
+                    body = json.dumps(
+                        panel.recorder.status() if panel.recorder is not None
+                        else {"recording": False, "available": False}
+                    ).encode("utf-8")
                     type = "application/json"
                 elif path == "/daq":
                     body = panel.daq().encode("utf-8")
@@ -1112,13 +1256,18 @@ class Panel(object):
     def daq(self):
         """Board status, for the DAQ section of the page."""
         if self.board is None:
-            return json.dumps({"active": False})
+            # Recording needs no board: it only writes what already arrives
+            # over port 1000. Say so, or the page would hide the controls.
+            return json.dumps({"active": False,
+                               "writable": self.control is not None,
+                               "canRecord": self.recorder is not None})
         raw, error = self.board.text()
         d = {"active": True, "target": self.board.target,
              # The page uses this to decide whether to show the controls at
              # all. It is a convenience, not the security boundary: /control
              # checks for itself and answers 403 when writes are off.
              "writable": self.control is not None,
+             "canRecord": self.recorder is not None,
              "raw": raw, "error": error}
         if raw:
             d.update(parse_daqstat(raw))
@@ -1224,6 +1373,9 @@ class Panel(object):
 
 
 def run(args):
+    # Declared up front: the socket timeout below has to know whether a
+    # recorder will be in the chain, and it is built further down.
+    recorder = None
     # Zero suppression is set on the chip, so it has to happen before we take
     # the single client slot on port 1000: if it fails we want to fail here,
     # not with the acquisition already half started.
@@ -1287,6 +1439,10 @@ def run(args):
         # live monitoring needs, where minutes can go by between bursts
         # without a single byte.
         espera = args.timeout if args.timeout > 0 else None
+        if recorder is not None:
+            # A recording with a duration is stopped from inside recv(), so a
+            # blocking wait would sail past the end during a silent stretch.
+            espera = 1.0 if espera is None else min(espera, 1.0)
         if args.duration is not None:
             # The deadline is only checked between packets, so with no data
             # arriving a blocking recv would sail straight past it. Waking up
@@ -1328,6 +1484,12 @@ def run(args):
             print("  palabra {0:4d}  0x{1:08X}  {2:032b}".format(i // 4, w, w))
         return 0
 
+    # The recorder always sits in the chain when the page can drive it. Idle
+    # it is a straight pass-through, so it costs nothing until armed.
+    if args.web and args.allow_writes:
+        recorder = Recorder(sock, args.record_dir)
+        sock = recorder
+
     panel = None
     if args.web:
         board = None
@@ -1340,14 +1502,37 @@ def run(args):
 
         control = None
         if args.allow_writes:
-            if board is None:
-                print("  --allow-writes needs --board: there is no way to "
-                      "reach the chip without it")
-                return 1
 
-            def control(peticion, _b=board, _a=args):
+            def control(peticion, _b=board, _a=args, _r=lambda: recorder):
                 """Apply what the page asked for. Returns (lines, error)."""
                 que = peticion.get("what")
+
+                # Recording needs no board: it writes the stream that is
+                # already arriving on port 1000.
+                if que == "record":
+                    grabador = _r()
+                    if grabador is None:
+                        return [], "recording is not available"
+                    segundos = peticion.get("seconds")
+                    if segundos in (None, "", "open"):
+                        return grabador.start(None)
+                    try:
+                        segundos = parse_duration(segundos)
+                    except ValueError as e:
+                        return [], str(e)
+                    if segundos <= 0:
+                        return [], "the duration must be greater than zero"
+                    return grabador.start(segundos)
+                if que == "stop":
+                    grabador = _r()
+                    if grabador is None:
+                        return [], "recording is not available"
+                    return grabador.stop("stopped by hand")
+
+                # Everything below writes to the chip, which does need one.
+                if _b is None:
+                    return [], ("this needs --board: there is no way to reach "
+                                "the chip without it")
                 if que == "zs":
                     umbral = peticion.get("threshold")
                     if umbral in (None, "", "off"):
@@ -1378,7 +1563,7 @@ def run(args):
         try:
             panel = Panel(args.web, args.mode,
                           args.file or "{0}:{1}".format(args.host, args.port),
-                          board, control)
+                          board, control, recorder)
         except MissingFile as e:
             print("")
             print("  {0}".format(e))
@@ -1556,6 +1741,9 @@ def main(argv=None):
                    help="samples kept before each pulse, 0 to 3 (default 1)")
     p.add_argument("--zs-post", type=int, default=2, metavar="N",
                    help="samples kept after each pulse, 0 to 7 (default 2)")
+    p.add_argument("--record-dir", default=".", metavar="DIR",
+                   help="where recordings started from the page are written "
+                        "(default: the current directory)")
     p.add_argument("--allow-writes", action="store_true",
                    help="let the web page change the chip (zero suppression) "
                         "and the capture duration. OFF by default: without it "

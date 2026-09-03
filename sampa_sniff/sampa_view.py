@@ -243,6 +243,35 @@ td.bad{color:var(--accent);font-weight:600}
               font-size:11px;line-height:1.5;white-space:pre-wrap}
 #control .echo.err{color:var(--accent)}
 
+/* --- recording --- */
+#rec{display:none;margin-top:14px;padding:12px 14px;background:var(--paper);
+     border:1px solid var(--line);border-radius:6px}
+#rec.on{display:block}
+#rec h3{margin:0 0 4px;font-size:13px;font-weight:600}
+#rec .fila{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-top:10px}
+#rec label{font-size:12px;color:var(--soft);display:block}
+#rec input{width:120px;padding:4px 6px;font-size:13px;font-family:inherit;
+           background:var(--bg);color:var(--ink);border:1px solid var(--line);
+           border-radius:4px}
+#rec button{border:1px solid var(--line);background:none;color:var(--ink);
+            border-radius:5px;padding:5px 14px;font-size:12px;cursor:pointer;
+            font-family:inherit}
+#rec button:hover:not(:disabled){border-color:var(--trace);color:var(--trace)}
+#rec button:disabled{opacity:.5;cursor:default}
+#btRec.grabando{border-color:var(--accent);color:var(--accent)}
+#rec .estado{margin-top:12px;font-size:13px;font-variant-numeric:tabular-nums}
+#rec .punto{display:inline-block;width:9px;height:9px;border-radius:50%;
+            background:var(--accent);margin-right:7px;vertical-align:-1px}
+@media (prefers-reduced-motion:no-preference){
+  #rec .punto{animation:latir 1.4s ease-in-out infinite}
+}
+#rec .barra{height:4px;background:var(--line);border-radius:2px;margin-top:8px;
+            overflow:hidden}
+#rec .barra i{display:block;height:100%;background:var(--accent);width:0}
+#rec .ultima{margin-top:10px;font-size:12px;color:var(--soft)}
+#rec .ultima b{color:var(--ink);font-family:ui-monospace,Menlo,Consolas,monospace;
+               font-weight:600}
+
 /* --- modal window --- */
 #veil{position:fixed;inset:0;background:var(--veil);display:none;z-index:50;
       align-items:center;justify-content:center;padding:20px}
@@ -349,6 +378,22 @@ every channel at once.</p>
   <button id="btAcq">start a burst</button>
 </div>
 <div class="echo" id="control-echo"></div>
+</div>
+
+<div id="rec">
+<h3>Record an experiment</h3>
+<p class="sub">Writes the raw stream to a <code>.bin</code> for exactly as long
+as you ask. The file is named after the run: when it started, when it ended and
+how long it lasted. Leave the time empty to record until you press stop.</p>
+<div class="fila">
+  <div><label for="rec-dur">duration</label>
+       <input id="rec-dur" type="text" placeholder="30m" value="30m"></div>
+  <button id="btRec">record</button>
+  <span class="sub">30m &middot; 1h30m &middot; 90s &middot; 01:30:00</span>
+</div>
+<div class="estado" id="rec-estado"></div>
+<div class="barra" id="rec-barra" hidden><i></i></div>
+<div class="ultima" id="rec-ultima"></div>
 </div>
 </div>
 
@@ -990,6 +1035,113 @@ function startControls() {
   box.classList.add("on");
 }
 
+
+/* ---------- recording ---------- */
+
+/* The duration is checked here as well as on the receiver. Not for safety --
+   the receiver decides -- but so a typo says so straight away instead of
+   after a round trip. */
+function parseDur(t) {
+  t = String(t || "").trim().toLowerCase();
+  if (!t) return null;                       /* empty = until stopped */
+  if (t.indexOf(":") >= 0) {
+    const p = t.split(":");
+    if (p.length > 3 || p.some(x => x === "" || isNaN(+x))) return NaN;
+    return p.reduce((a, x) => a * 60 + (+x), 0);
+  }
+  const m = t.match(/^(\\d*\\.?\\d+\\s*[hms]?)+$/);
+  if (!m) return NaN;
+  let total = 0, hubo = false;
+  t.replace(/(\\d*\\.?\\d+)\\s*([hms]?)/g, (_, n, u) => {
+    total += (+n) * ({h: 3600, m: 60, s: 1, "": 1})[u]; hubo = true; return "";
+  });
+  return hubo ? total : NaN;
+}
+
+function humanDur(s) {
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  if (h) return h + "h " + String(m).padStart(2, "0") + "m " + String(x).padStart(2, "0") + "s";
+  if (m) return m + "m " + String(x).padStart(2, "0") + "s";
+  return x + "s";
+}
+
+function startRecording() {
+  const caja = document.getElementById("rec");
+  const bt = document.getElementById("btRec");
+  const dur = document.getElementById("rec-dur");
+  const est = document.getElementById("rec-estado");
+  const barra = document.getElementById("rec-barra");
+  const ultima = document.getElementById("rec-ultima");
+  let grabando = false;
+
+  function pinta(d) {
+    grabando = !!d.recording;
+    bt.textContent = grabando ? "stop" : "record";
+    bt.classList.toggle("grabando", grabando);
+    dur.disabled = grabando;
+
+    if (grabando) {
+      const mb = (d.bytes / 1e6).toFixed(1);
+      let t = '<span class="punto"></span>recording ' + humanDur(d.elapsed)
+            + "  ·  " + mb + " MB";
+      if (d.left !== undefined) t += "  ·  " + humanDur(d.left) + " left";
+      est.innerHTML = t;
+      barra.hidden = d.duration == null;
+      if (d.duration) {
+        const pct = Math.min(100, 100 * d.elapsed / d.duration);
+        barra.firstElementChild.style.width = pct + "%";
+      }
+    } else {
+      est.textContent = "";
+      barra.hidden = true;
+    }
+
+    if (d.last) {
+      ultima.innerHTML = "last run: <b>" + esc(d.last.file) + "</b><br>"
+        + esc(d.last.started.replace("T", " ")) + " → "
+        + esc(d.last.ended.replace("T", " ")) + "  ·  "
+        + esc(d.last.duration) + "  ·  "
+        + (d.last.bytes / 1e6).toFixed(1) + " MB  ·  " + esc(d.last.why);
+    }
+  }
+
+  function manda(cuerpo) {
+    bt.disabled = true;
+    fetch("control", {method: "POST",
+                      headers: {"Content-Type": "application/json"},
+                      body: JSON.stringify(cuerpo)})
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) est.innerHTML = '<span style="color:var(--accent)">'
+                                 + esc(d.error || "failed") + "</span>";
+        refresca();
+      })
+      .catch(e => { est.textContent = "could not reach the receiver: " + e; })
+      .finally(() => { bt.disabled = false; });
+  }
+
+  bt.onclick = () => {
+    if (grabando) { manda({what: "stop"}); return; }
+    const segs = parseDur(dur.value);
+    if (Number.isNaN(segs)) {
+      est.innerHTML = '<span style="color:var(--accent)">not a duration: '
+                    + 'use 30m, 1h30m, 90s or 01:30:00</span>';
+      return;
+    }
+    manda({what: "record", seconds: dur.value.trim() || "open"});
+  };
+
+  function refresca() {
+    fetch("rec", {cache: "no-store"})
+      .then(r => r.json()).then(pinta).catch(() => {});
+  }
+  refresca();
+  /* Once a second: enough for a counter, and it is a tiny request. */
+  setInterval(refresca, 1000);
+  caja.classList.add("on");
+}
+
 /* ---------- board status (daqstat over ssh) ---------- */
 
 /* Only meaningful live: in a static page saved to disk there is nobody on
@@ -1003,7 +1155,7 @@ function esc(t) {
   }[c]));
 }
 
-let controlsUp = false;
+let controlsUp = false, recUp = false;
 
 function startBoardPanel() {
   const box = document.getElementById("board");
@@ -1019,6 +1171,10 @@ function startBoardPanel() {
   }
 
   function draw(d) {
+    /* Recording needs no board -- it saves the stream that is already
+       arriving -- so this comes before the early return below. */
+    if (d.canRecord && !recUp) { startRecording(); recUp = true; }
+
     if (!d.active) return;                 /* started without --board */
     box.classList.add("on");
     if (d.writable && !controlsUp) { startControls(); controlsUp = true; }

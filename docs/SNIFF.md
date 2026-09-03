@@ -51,7 +51,8 @@ environment, no dependencies. It behaves the same on Linux and on Windows.
 | `--zs` | COUNTS \| off | — | set the zero-suppression threshold on the chip, in ADC counts. Needs `--board` |
 | `--zs-pre` | N | 1 | samples kept before each pulse, 0 to 3 |
 | `--zs-post` | N | 2 | samples kept after each pulse, 0 to 7 |
-| `--allow-writes` | — | no | let the web page change the chip. Binds the server to 127.0.0.1 |
+| `--allow-writes` | — | no | let the web page record and change the chip. Binds the server to 127.0.0.1 |
+| `--record-dir` | DIR | `.` | where recordings started from the page are written |
 | `--sampa-cfg` | PATH | `./sampa_cfg` | where `sampa_cfg` lives on the board |
 | `--csv` | PREFIX | — | write `PREFIX_packets.csv` |
 | `--csv-long` | — | no | also `PREFIX_samples.csv`, one row per sample |
@@ -216,6 +217,39 @@ python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --web --board --allow-wr
 > The check is enforced on the server too, not just by hiding the buttons:
 > without the flag, `/control` answers 403. A stale browser tab cannot poke
 > the chip either.
+
+### Recording from the page
+
+With `--allow-writes` the live view grows a **Record an experiment** panel:
+type a duration, press **record**, and the raw stream is written to a `.bin`
+for exactly that long.
+
+```sh
+python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --web --allow-writes \
+        --record-dir /data/runs
+```
+
+While it runs the panel shows elapsed time, megabytes written, time left and a
+progress bar, and the button becomes **stop** so a run can be cut short. Leave
+the duration empty to record until you stop it by hand.
+
+The file is named after the experiment — when it started, when it ended and how
+long it lasted:
+
+```
+sampa_2026-09-03_1430-00_to_1500-00_30m00s.bin
+```
+
+While recording it is called `..._RECORDING.bin` and is renamed on stop, so the
+name always describes what actually happened, even for a run that was cut short
+or ended when the receiver shut down. When it finishes, the panel shows the
+summary: file, start, end, duration, size, and why it stopped.
+
+The duration accepts the same forms as `--duration`, and is checked in the
+browser as well as on the receiver so a typo says so straight away.
+
+**Recording needs no `--board`**: it saves the stream that is already arriving
+on port 1000. `--board` is only needed for the chip controls.
 
 ---
 
