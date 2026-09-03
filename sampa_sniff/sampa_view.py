@@ -990,7 +990,7 @@ function montar(nuevo) {
    the block stays hidden and the page is what it has always been, a viewer.
    The server enforces this too: without the flag /control answers 403. Doing
    it in both places means a stale tab cannot poke the chip either. */
-function startControls() {
+function startControls(hasBoard) {
   const box = document.getElementById("control");
   const echo = document.getElementById("control-echo");
   const buttons = ["btZs", "btZsOff", "btAcq"].map(i => document.getElementById(i));
@@ -1032,6 +1032,13 @@ function startControls() {
     {what: "acquire", packets: num("acq-n")},
     "starting a burst");
 
+  if (!hasBoard) {
+    /* These write to the chip over ssh, which needs --board. Saying so beats
+       the panel quietly not being there at all. */
+    buttons.forEach(b => b.disabled = true);
+    say("these need --board: the threshold is written to the chip over ssh, "
+        + "not by this receiver. Restart with --board to enable them.", true);
+  }
   box.classList.add("on");
 }
 
@@ -1134,12 +1141,19 @@ function startRecording() {
 
   function refresca() {
     fetch("rec", {cache: "no-store"})
-      .then(r => r.json()).then(pinta).catch(() => {});
+      .then(r => r.json())
+      .then(d => {
+        /* The receiver says whether recording is available at all. Without
+           --allow-writes it is not, and the panel stays hidden. */
+        if (d.available === false) { caja.classList.remove("on"); return; }
+        caja.classList.add("on");
+        pinta(d);
+      })
+      .catch(() => {});
   }
   refresca();
   /* Once a second: enough for a counter, and it is a tiny request. */
   setInterval(refresca, 1000);
-  caja.classList.add("on");
 }
 
 /* ---------- board status (daqstat over ssh) ---------- */
@@ -1155,7 +1169,7 @@ function esc(t) {
   }[c]));
 }
 
-let controlsUp = false, recUp = false;
+let controlsUp = false;
 
 function startBoardPanel() {
   const box = document.getElementById("board");
@@ -1171,13 +1185,13 @@ function startBoardPanel() {
   }
 
   function draw(d) {
-    /* Recording needs no board -- it saves the stream that is already
-       arriving -- so this comes before the early return below. */
-    if (d.canRecord && !recUp) { startRecording(); recUp = true; }
+    /* This comes before the early return: it does not depend on the board
+       being reachable, and hiding it when it is not made the page look
+       broken. */
+    if (d.writable && !controlsUp) { startControls(d.active); controlsUp = true; }
 
     if (!d.active) return;                 /* started without --board */
     box.classList.add("on");
-    if (d.writable && !controlsUp) { startControls(); controlsUp = true; }
 
     if (d.error) {
       resumen.innerHTML = "";
@@ -1247,7 +1261,13 @@ function startBoardPanel() {
   setInterval(tick, 3000);
 }
 
-if (LIVE) startBoardPanel();
+if (LIVE) {
+  /* Recording is served locally and answers instantly. The board panel does
+     an ssh round trip that can take seconds, or time out, so it must not
+     hold the recording controls hostage. */
+  startRecording();
+  startBoardPanel();
+}
 
 
 /* ---------- en live ---------- */
