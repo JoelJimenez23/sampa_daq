@@ -642,6 +642,11 @@ class Recorder(object):
         self.bytes = 0
         self._unflushed = 0
         self.last = None          # summary of the recording just finished
+        # A recording must end when it said it would, even if not one byte
+        # arrives in the meantime -- between bursts the socket can be silent
+        # for a long time. Hanging the check off recv() made the stop wait
+        # for the next packet, which overran a one-minute run by 21 seconds.
+        self._timer = None
 
     # -- naming -----------------------------------------------------------
     @staticmethod
@@ -686,9 +691,19 @@ class Recorder(object):
             # Monotonic, so a clock step mid-run cannot stretch or shorten
             # the experiment.
             self.deadline = None if seconds is None else time.monotonic() + seconds
+            if seconds is not None:
+                self._timer = threading.Timer(seconds, self._time_is_up)
+                self._timer.daemon = True
+                self._timer.start()
             cuanto = ("for " + human_duration(seconds)) if seconds else "until stopped"
             return ["recording %s" % cuanto,
                     "writing %s" % os.path.basename(path)], ""
+
+    def _time_is_up(self):
+        """Fired by the timer thread when the requested time has elapsed."""
+        with self.lock:
+            if self.f is not None:
+                self._stop_locked("finished the requested time")
 
     def stop(self, reason="stopped"):
         with self.lock:
@@ -697,6 +712,9 @@ class Recorder(object):
     def _stop_locked(self, reason):
         if self.f is None:
             return [], "not recording"
+        if self._timer is not None:
+            self._timer.cancel()      # harmless if it is the one calling us
+            self._timer = None
         self.f.close()
         end = datetime.datetime.now()
         secs = (end - self.started).total_seconds()
@@ -733,10 +751,6 @@ class Recorder(object):
                     if self._unflushed >= 1 << 20:
                         self.f.flush()
                         self._unflushed = 0
-                # Checked here because this is the one place that runs
-                # constantly while data flows.
-                if self.deadline is not None and time.monotonic() >= self.deadline:
-                    self._stop_locked("finished the requested time")
         return data
 
     def settimeout(self, t):
@@ -1439,10 +1453,6 @@ def run(args):
         # live monitoring needs, where minutes can go by between bursts
         # without a single byte.
         espera = args.timeout if args.timeout > 0 else None
-        if recorder is not None:
-            # A recording with a duration is stopped from inside recv(), so a
-            # blocking wait would sail past the end during a silent stretch.
-            espera = 1.0 if espera is None else min(espera, 1.0)
         if args.duration is not None:
             # The deadline is only checked between packets, so with no data
             # arriving a blocking recv would sail straight past it. Waking up
