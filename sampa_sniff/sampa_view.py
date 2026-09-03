@@ -22,6 +22,7 @@ you need to see at a glance when channels are switched off to gain bandwidth.
 
 import argparse
 import collections
+import io
 import json
 import os
 import sys
@@ -1426,7 +1427,9 @@ def main(argv=None):
         return 1
 
     html = page(d)
-    with open(output, "w") as f:
+    # encoding is not optional here: the page carries arrows and middots, and
+    # on Windows the default is cp1252, which cannot encode them.
+    with io.open(output, "w", encoding="utf-8") as f:
         f.write(html)
     print("written {0}  ({1:.1f} MB)".format(output,
                                              os.path.getsize(output) / 1048576.0))

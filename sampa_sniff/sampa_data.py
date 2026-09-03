@@ -28,6 +28,7 @@ column pulled out, or the whole thing dumped to CSV.
 """
 
 import csv
+import io
 import struct
 import sys
 
@@ -80,7 +81,7 @@ class Table(object):
 
     def csv(self, path):
         """Dump the table to a CSV, in case somebody needs it on disk."""
-        with open(path, "w") as f:
+        with io.open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(self.columns)
             for i in range(len(self)):

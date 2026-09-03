@@ -44,6 +44,7 @@ import base64
 import csv
 import datetime
 import hashlib
+import io
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -426,7 +427,10 @@ class CsvWriter(object):
     def __init__(self, prefix, long_fmt=False, clusters=False, mode="auto"):
         self.mode = mode
         self.path = prefix + "_packets.csv"
-        self.f = open(self.path, "w")
+        # newline="" is what the csv module asks for: without it Windows
+        # turns every row ending into \r\r\n. And the encoding cannot be left
+        # to the platform, which is cp1252 there.
+        self.f = io.open(self.path, "w", newline="", encoding="utf-8")
         self.w = csv.writer(self.f)
         self.w.writerow(CSV_HEADER)
         self.fl = None
@@ -434,7 +438,7 @@ class CsvWriter(object):
         self.path_long = None
         if long_fmt:
             self.path_long = prefix + "_samples.csv"
-            self.fl = open(self.path_long, "w")
+            self.fl = io.open(self.path_long, "w", newline="", encoding="utf-8")
             self.wl = csv.writer(self.fl)
             self.wl.writerow(CSV_HEADER_LONG)
         self.fc = None
@@ -442,7 +446,7 @@ class CsvWriter(object):
         self.path_clusters = None
         if clusters:
             self.path_clusters = prefix + "_clusters.csv"
-            self.fc = open(self.path_clusters, "w")
+            self.fc = io.open(self.path_clusters, "w", newline="", encoding="utf-8")
             self.wc = csv.writer(self.fc)
             self.wc.writerow(CSV_HEADER_CLUSTERS)
         self.rows = 0
