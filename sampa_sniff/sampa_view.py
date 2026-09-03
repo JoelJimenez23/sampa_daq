@@ -244,6 +244,18 @@ td.bad{color:var(--accent);font-weight:600}
               font-size:11px;line-height:1.5;white-space:pre-wrap}
 #control .echo.err{color:var(--accent)}
 
+/* --- time scrubber inside the big window --- */
+#scrub2{display:none;align-items:center;gap:10px;padding:8px 14px 0}
+#scrub2.on{display:flex}
+#scrub2 input[type=range]{flex:1;accent-color:var(--trace);cursor:pointer}
+#scrub2 button{border:1px solid var(--line);background:none;color:var(--ink);
+               border-radius:5px;padding:2px 9px;font-size:12px;cursor:pointer;
+               font-family:inherit}
+#scrub2 button:hover{border-color:var(--trace);color:var(--trace)}
+#scrub2 .donde{font-size:12px;color:var(--soft);font-variant-numeric:tabular-nums;
+               min-width:15em;text-align:right}
+#scrub2 .donde b{color:var(--ink);font-weight:600}
+
 /* --- time scrubber --- */
 #scrub{display:none;margin:10px 0 4px;padding:10px 12px;background:var(--paper);
        border:1px solid var(--line);border-radius:6px}
@@ -439,6 +451,12 @@ how long it lasted. Leave the time empty to record until you press stop.</p>
     <button id="btClose">close</button>
   </div>
   <canvas id="grande"></canvas>
+  <div id="scrub2">
+    <button id="s2Prev" title="previous readout">&larr;</button>
+    <input id="s2Range" type="range" min="0" max="0" value="0" step="1">
+    <button id="s2Next" title="next readout">&rarr;</button>
+    <span class="donde" id="s2Donde"></span>
+  </div>
   <div id="pie">
     <span id="readout">&nbsp;</span>
     <span><kbd>wheel</kbd> zoom &middot; <kbd>drag</kbd> pan &middot;
@@ -685,8 +703,20 @@ const MI = {left:58, right:16, arr:14, aba:34};
 
 function openModal(type, ch) {
   V.type = type; V.ch = ch;
-  V.pts = series(type, D.channels[ch]);
+  /* While browsing a saved run the trace comes from the readout on screen,
+     not from the summary the page was loaded with. */
+  if (type === "wave" && modoOnda === "browse" && VENTANA) {
+    const v = VENTANA.channels[String(ch)] || [];
+    V.pts = v.map((y, i) => [i, y]);
+  } else {
+    V.pts = series(type, D.channels[ch]);
+  }
   resetZoom();
+  /* Only the waveform has a position in time to move through: the spectrum
+     and the peak histogram are built from the whole run, and the temporal
+     view is already a time series. */
+  document.getElementById("scrub2").classList.toggle("on",
+      SEEKABLE && type === "wave");
   document.getElementById("veil").classList.add("abierto");
   draw(); anima();
 }
@@ -701,6 +731,7 @@ function resetZoom() {
 function closeModal() {
   document.getElementById("veil").classList.remove("abierto");
   V.type = null;
+  document.getElementById("scrub2").classList.remove("on");
 }
 
 function step(d) { if (V.type) openModal(V.type, (V.ch + d + 32) % 32); }
@@ -1016,17 +1047,29 @@ function montar(nuevo) {
    samples -- so the file stays on the receiver and we ask for the readout
    being looked at. Only available when reading a saved capture (-f). */
 let VENTANA = null;          /* {rd, channels} currently on screen */
+let SEEKABLE = false;        /* true once the receiver says it can seek */
 
 function startScrub() {
   const caja = document.getElementById("scrub");
   const barra = document.getElementById("scRange");
   const donde = document.getElementById("scDonde");
+  /* The same bar again inside the big window: once a channel is open you
+     want to walk through time without closing it. Both drive the same
+     position -- there is one time axis for the run -- so one request feeds
+     the grid and the zoomed trace alike. */
+  const caja2 = document.getElementById("scrub2");
+  const barra2 = document.getElementById("s2Range");
+  const donde2 = document.getElementById("s2Donde");
   let total = 0, pidiendo = false, pendiente = null;
 
   function texto(rd, t_us) {
     const ms = (t_us / 1000);
-    donde.innerHTML = "readout <b>" + rd + "</b> of " + (total - 1)
-                    + " &middot; <b>" + ms.toFixed(1) + "</b> ms";
+    const t = "readout <b>" + rd + "</b> of " + (total - 1)
+            + " &middot; <b>" + ms.toFixed(1) + "</b> ms";
+    donde.innerHTML = t;
+    donde2.innerHTML = t;
+    barra.value = String(rd);
+    barra2.value = String(rd);
   }
 
   function pinta(d) {
@@ -1059,8 +1102,10 @@ function startScrub() {
         if (d.total && d.total !== total) {
           total = d.total;
           barra.max = String(total - 1);
+          barra2.max = String(total - 1);
         }
         caja.classList.add("on");
+        SEEKABLE = true;
         pinta(d);
       })
       .catch(() => {})
@@ -1071,12 +1116,16 @@ function startScrub() {
   }
 
   barra.oninput = () => pide(+barra.value);
+  barra2.oninput = () => pide(+barra2.value);
   const salta = n => {
-    barra.value = String(Math.max(0, Math.min(total - 1, (+barra.value) + n)));
-    pide(+barra.value);
+    const v = Math.max(0, Math.min(total - 1, (+barra.value) + n));
+    barra.value = barra2.value = String(v);
+    pide(v);
   };
   document.getElementById("scPrev").onclick = () => salta(-1);
   document.getElementById("scNext").onclick = () => salta(+1);
+  document.getElementById("s2Prev").onclick = () => salta(-1);
+  document.getElementById("s2Next").onclick = () => salta(+1);
   /* Arrow keys, once the slider has focus, come free with input[type=range]. */
   pide(0);
 }
