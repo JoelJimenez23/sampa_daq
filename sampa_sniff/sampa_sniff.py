@@ -1316,9 +1316,17 @@ class Panel(object):
                 # clue as to what went wrong.
                 try:
                     lineas, err = panel.control(peticion)
+                    # A refusal is not a server fault. A mistyped duration,
+                    # a missing --board, nothing to stop: the request could
+                    # not be carried out, which is a 400. Answering 500 made
+                    # the browser console shout about an internal error
+                    # while the real reason sat in the body, unread.
+                    code = 200 if not err else 400
                 except Exception as e:
+                    # Only a genuine bug in the receiver reaches here.
                     lineas, err = [], "%s: %s" % (type(e).__name__, e)
-                self.responde(200 if not err else 500,
+                    code = 500
+                self.responde(code,
                               {"ok": not err, "log": lineas, "error": err})
 
             def responde(self, code, obj):
@@ -1643,6 +1651,20 @@ def run(args):
     # The recorder always sits in the chain when the page can drive it. Idle
     # it is a straight pass-through, so it costs nothing until armed.
     if args.web and args.allow_writes:
+        # Create the directory now rather than letting the first recording
+        # fail. A path that does not exist yet is the usual reason "record"
+        # comes back with an error, and it is a silly thing to lose a run to.
+        try:
+            if args.record_dir and not os.path.isdir(args.record_dir):
+                os.makedirs(args.record_dir)
+                print("created the recording directory {0}"
+                      .format(args.record_dir))
+        except OSError as e:
+            print("  could not create {0}: {1}".format(args.record_dir, e))
+            print("  recordings started from the page would fail, so fix the")
+            print("  path or drop --record-dir to use the current directory.")
+            sock.close()
+            return 1
         recorder = Recorder(sock, args.record_dir)
         sock = recorder
 
