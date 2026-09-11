@@ -21,8 +21,25 @@
 
 # --- What this file does NOT touch, on purpose -------------------------
 #
-# [sequence]   no resets. reset_sampa = true would throw away the state
-#              that currently works. Add it by hand if you ever need it.
+# [sequence]   no resets. Applying this file to a chip that is already
+#              running must not throw away the state that works.
+#
+#              BUT a chip that has just been powered on is the opposite
+#              case: it needs a soft reset BEFORE being configured, or its
+#              serial outputs stay half dead. On 2026-09-11 the chip came
+#              back from a power cut with three of the four links in sync
+#              and counting zero packets, ERRORS = 0xF0 (7 uncorrectable
+#              header Hamming errors, the maximum the field holds) and only
+#              channel 24 arriving. Registers were perfect; the order was
+#              wrong. What fixed it, in this order:
+#
+#                  ./sampa_cfg write 0 CMD 5              # SOFTRST
+#                  ./sampa_cfg --verify apply bench.toml
+#                  ./sampa_cfg write 0 CMD 6              # LNKSYNC
+#                  ./daqstat acquire 2048
+#
+#              Reset, configure, THEN synchronise. ERRORS went to 0x00 and
+#              the four links started counting 4097 packets each.
 #
 # Every section is optional: what is not here is not written.
 

@@ -274,6 +274,71 @@ scp bin/daqstat root@10.0.163.205:/home/root/
 
 ## Troubleshooting
 
+**First of all: is the SAMPA powered?** Its card has a supply of its own,
+separate from the SoC board, and it does not come back by itself after a
+mains cut. The SoC boots normally, the FPGA loads, every register reads
+fine, and the chip is simply off. The signature is below, under *the
+i2c_master does not respond*. On 2026-09-11 this cost a full afternoon of
+resets, a `.jic` reflash and a hung bridge before somebody pressed the
+button on the supply.
+
+**The i2c_master does not respond (TIMEOUT), and what it is not.**
+`sampa_cfg` reports two different failures and they mean opposite things:
+
+| Message | Meaning |
+|---|---|
+| `the i2c_master did not respond` (TIMEOUT) | the state machine inside the FPGA never finished: `COM_REG[7:1]` never cleared |
+| `the SAMPA did not answer` (NACK) | the master finished cleanly and the chip did not acknowledge |
+
+A TIMEOUT is not the chip refusing: it is the transfer never happening.
+Dump the block to see why (it lives at `OFF_I2C = 0x3000`, one register
+every 4 bytes):
+
+```sh
+./daqstat 0xFF203000 7      # PRE CTR ADD TX RX COM STA
+```
+
+| Reading | Meaning |
+|---|---|
+| `PRE = 0x0D`, `CTR = 0x02` | prescaler and core enable correct; `sampa_cfg` writes them on every run |
+| `COM` non-zero | a command is still in flight: the transaction hung |
+| `STA = 0x03` — `TIP = 1`, `BUSY = 0` | the master never managed to put a START on the bus, which needs SCL **high**. Either the chip is holding SCL low, or **the bus pull-ups have no power** — from software the two look identical, only a meter on SCL separates them |
+| `ADD` and `TX` unchanged across several attempts | the block is frozen: it is not even accepting register writes. Different fault from the one above |
+
+**A chip that has just been powered on needs a soft reset before it is
+configured.** Otherwise its serial outputs come up half dead: links report
+`sync yes` and count zero packets, `ERRORS` reads `0xF0` (7 uncorrectable
+header Hamming errors, the maximum the 3-bit field holds), and a single
+channel arrives. Every register reads correct, because the registers are
+not the problem — the order is. The recipe, verified on 2026-09-11:
+
+```sh
+./sampa_cfg write 0 CMD 5              # SOFTRST
+./sampa_cfg --verify apply bench.toml  # the reset may clear registers
+./sampa_cfg dump 0                     # confirm CHEN0..3 and SOCFG
+./sampa_cfg write 0 CMD 6              # LNKSYNC
+./daqstat acquire 2048
+```
+
+Reset, configure, **then** synchronise. `ERRORS` went to `0x00` and the four
+links started counting 4097 packets each, which is what one `acquire 2048`
+delivers.
+
+**Never write `CMD_REG = 1` (reset all).** `./daqstat -w 0xFF20000C 1` hangs
+the h2f_lw bridge: the store never completes, the process is stuck in an
+uninterruptible wait, and the board is gone until somebody cuts the power.
+`daqstat` deliberately exposes only `reset` (= 2), `trigger` (= 3) and
+`bxsync` (= 5).
+
+**The buttons on the bench** (from `trunk/hdl/SAMPA_FPGA_test_board.vhd`):
+
+| Control | Line | What it does |
+|---|---|---|
+| KEY4 / `RESET_n`, pin AD27 | 923 | `sampa_Hrstb <= sampa_Hrstb_int and RESET_n` — hard reset of the chip. Same pin `daqstat reset` drives, but the button can be **held** |
+| `PORin` | 929 | **commented out**: the FPGA cannot give the chip a power-on reset. Only cutting its power does that |
+| KEY3 | 1049 | freezes the SO clock while held low |
+| SW3 / LED3 | 43 | the internal/external SAMPA selector does nothing: `test_mode = 0` in this build |
+
 **Links half up, or all in sync but with the counters stuck at zero: power
 cycle the board.** It is the only recipe that has worked, and it is verified.
 Symptoms: only some links show `sync yes`, or every link is in sync but the
