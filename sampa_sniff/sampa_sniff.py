@@ -37,6 +37,7 @@ import os
 import re
 import socket
 import struct
+import shutil
 import subprocess
 import sys
 import time
@@ -715,6 +716,31 @@ class Archive(object):
         return canales, ""
 
 
+def free_bytes(directory):
+    """Bytes free where recordings go, or None if it cannot be asked.
+
+    A VM disk fills up fast: the raw stream of 32 channels with no zero
+    suppression is about 10 GB per minute. Knowing this before a run beats
+    discovering it halfway through one.
+    """
+    try:
+        return shutil.disk_usage(directory or ".").free
+    except OSError:
+        return None
+
+
+def human_bytes(n):
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return "%.1f %s" % (n, unit) if unit != "B" else "%d B" % n
+        n /= 1024.0
+
+
+# Refuse to start a recording with less than this free: it would die almost
+# at once and the half file is worth nothing.
+MIN_FREE = 64 << 20
+
+
 class Recorder(object):
     """A recording that can be started and stopped while the run is going.
 
@@ -743,6 +769,7 @@ class Recorder(object):
         self.duration = None      # seconds requested, None = open-ended
         self.bytes = 0
         self._unflushed = 0
+        self.fail = None          # why the last recording died, if it did
         self.last = None          # summary of the recording just finished
         # A recording must end when it said it would, even if not one byte
         # arrives in the meantime -- between bursts the socket can be silent
@@ -764,7 +791,8 @@ class Recorder(object):
     # -- state, for the page ----------------------------------------------
     def status(self):
         with self.lock:
-            d = {"recording": self.f is not None, "last": self.last}
+            d = {"recording": self.f is not None, "last": self.last,
+                 "free": free_bytes(self.directory)}
             if self.f is not None:
                 d["path"] = os.path.basename(self.path)
                 d["bytes"] = self.bytes
@@ -782,6 +810,12 @@ class Recorder(object):
             if self.f is not None:
                 return [], "already recording into %s" % os.path.basename(self.path)
             started = datetime.datetime.now()
+            libre = free_bytes(self.directory)
+            if libre is not None and libre < MIN_FREE:
+                return [], ("only %s free in %s: not enough to record. The "
+                            "raw stream is about 10 GB per minute with 32 "
+                            "channels and no zero suppression."
+                            % (human_bytes(libre), self.directory or "."))
             path = os.path.join(self.directory, self._name(started))
             try:
                 f = open(path, "wb")
@@ -798,8 +832,12 @@ class Recorder(object):
                 self._timer.daemon = True
                 self._timer.start()
             cuanto = ("for " + human_duration(seconds)) if seconds else "until stopped"
-            return ["recording %s" % cuanto,
-                    "writing %s" % os.path.basename(path)], ""
+            lineas = ["recording %s" % cuanto,
+                      "writing %s" % os.path.basename(path)]
+            if libre is not None:
+                lineas.append("%s free in %s"
+                              % (human_bytes(libre), self.directory or "."))
+            return lineas, ""
 
     def _time_is_up(self):
         """Fired by the timer thread when the requested time has elapsed."""
@@ -847,12 +885,19 @@ class Recorder(object):
         with self.lock:
             if self.f is not None:
                 if data:
-                    self.f.write(data)
-                    self.bytes += len(data)
-                    self._unflushed += len(data)
-                    if self._unflushed >= 1 << 20:
-                        self.f.flush()
-                        self._unflushed = 0
+                    try:
+                        self.f.write(data)
+                        self.bytes += len(data)
+                        self._unflushed += len(data)
+                        if self._unflushed >= 1 << 20:
+                            self.f.flush()
+                            self._unflushed = 0
+                    except OSError as e:
+                        # A disk that fills up must cost you the recording,
+                        # never the session: the live view and the rest of
+                        # the run carry on with what is already on disk.
+                        self.fail = "write failed: %s" % e
+                        self._stop_locked("stopped, %s" % self.fail)
         return data
 
     def settimeout(self, t):
