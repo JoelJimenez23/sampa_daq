@@ -1289,6 +1289,13 @@ function startRecording() {
     fetch("rec", {cache: "no-store"})
       .then(r => r.json())
       .then(d => {
+        /* The configuration panel is mounted from here, not from /daq: this
+           route is local and instant, while /daq waits on ssh. A board that
+           is slow or unreachable must not hide the controls. */
+        if (d.writable && !controlsUp) {
+          startControls(d.hasBoard);
+          controlsUp = true;
+        }
         /* The receiver says whether recording is available at all. Without
            --allow-writes it is not, and the panel stays hidden. */
         if (d.available === false) { caja.classList.remove("on"); return; }

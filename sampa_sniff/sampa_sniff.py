@@ -1263,10 +1263,17 @@ class Panel(object):
                     body = panel.window(self.path).encode("utf-8")
                     type = "application/json"
                 elif path == "/rec":
-                    body = json.dumps(
-                        panel.recorder.status() if panel.recorder is not None
-                        else {"recording": False, "available": False}
-                    ).encode("utf-8")
+                    estado = (panel.recorder.status()
+                              if panel.recorder is not None
+                              else {"recording": False, "available": False})
+                    # The page mounts the configuration panel from here and
+                    # not from /daq. This route is local and answers at once;
+                    # /daq does an ssh round trip that can take seconds or
+                    # fail outright, and a board that is slow or unreachable
+                    # must not leave the controls hidden.
+                    estado["writable"] = panel.control is not None
+                    estado["hasBoard"] = panel.board is not None
+                    body = json.dumps(estado).encode("utf-8")
                     type = "application/json"
                 elif path == "/daq":
                     body = panel.daq().encode("utf-8")
