@@ -1229,12 +1229,21 @@ function startRecording() {
   let grabando = false;
 
   function pinta(d) {
-    grabando = !!d.recording;
+    /* Armed counts as recording for the button: the only thing you can do
+       next is cancel it. The gap is normally a single packet, but with no
+       acquire running it can last as long as the silence does, and the user
+       has to be able to see that and back out. */
+    const armando = !!d.arming;
+    grabando = !!d.recording || armando;
     bt.textContent = grabando ? "stop" : "record";
     bt.classList.toggle("grabando", grabando);
     dur.disabled = grabando;
 
-    if (grabando) {
+    if (armando) {
+      est.innerHTML = '<span class="punto"></span>armed &middot; it starts at the '
+                    + 'next packet. Nothing is arriving? Run an acquire.';
+      barra.hidden = true;
+    } else if (d.recording) {
       const mb = (d.bytes / 1e6).toFixed(1);
       let t = '<span class="punto"></span>recording ' + humanDur(d.elapsed)
             + "  ·  " + mb + " MB";
@@ -1248,6 +1257,12 @@ function startRecording() {
     } else {
       est.textContent = "";
       barra.hidden = true;
+    }
+
+    /* A recording killed by a full disk: say so where the state goes, or
+       the panel just quietly shows nothing and the run looks finished. */
+    if (d.fail && !d.recording && !armando) {
+      est.innerHTML = '<span style="color:var(--accent)">' + esc(d.fail) + "</span>";
     }
 
     if (d.last) {

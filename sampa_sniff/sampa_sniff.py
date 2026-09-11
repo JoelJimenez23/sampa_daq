@@ -770,6 +770,7 @@ class Recorder(object):
         self.bytes = 0
         self._unflushed = 0
         self.fail = None          # why the last recording died, if it did
+        self.pending = None       # armed, waiting for a packet boundary
         self.last = None          # summary of the recording just finished
         # A recording must end when it said it would, even if not one byte
         # arrives in the meantime -- between bursts the socket can be silent
@@ -792,6 +793,8 @@ class Recorder(object):
     def status(self):
         with self.lock:
             d = {"recording": self.f is not None, "last": self.last,
+                 "arming": self.pending is not None,
+                 "fail": self.fail,
                  "free": free_bytes(self.directory)}
             if self.f is not None:
                 d["path"] = os.path.basename(self.path)
@@ -805,39 +808,71 @@ class Recorder(object):
 
     # -- control ----------------------------------------------------------
     def start(self, seconds=None):
-        """Begin recording. seconds=None records until stopped."""
+        """Arm a recording. seconds=None records until stopped.
+
+        It does not open the file here. A capture must begin where a packet
+        begins, and this is called from the web thread, which has no idea
+        where the receive loop is: it could be between a header and its
+        payload, or halfway through either. The loop calls at_boundary()
+        between packets and the file is opened there. In practice that is
+        the very next packet, microseconds away.
+        """
         with self.lock:
             if self.f is not None:
                 return [], "already recording into %s" % os.path.basename(self.path)
-            started = datetime.datetime.now()
+            if self.pending is not None:
+                return [], "a recording is already armed for the next packet"
             libre = free_bytes(self.directory)
             if libre is not None and libre < MIN_FREE:
                 return [], ("only %s free in %s: not enough to record. The "
                             "raw stream is about 10 GB per minute with 32 "
                             "channels and no zero suppression."
                             % (human_bytes(libre), self.directory or "."))
+            self.pending = (seconds,)
+            self.fail = None
+            cuanto = ("for " + human_duration(seconds)) if seconds else "until stopped"
+            lineas = ["recording %s" % cuanto,
+                      "starting at the next packet"]
+            if libre is not None:
+                lineas.append("%s free in %s"
+                              % (human_bytes(libre), self.directory or "."))
+            return lineas, ""
+
+    def at_boundary(self):
+        """Called by the receive loop when the stream is between packets.
+
+        This is the only place a recording may begin. Recorder.recv() cannot
+        tell a header from a payload -- it only ever sees bytes -- so the
+        loop has to say when it is safe. Starting anywhere else produces a
+        file whose first bytes are the middle of a packet; the reader takes
+        them as a header, trusts them, and decodes the whole capture into
+        channels that were never there. The live view looks perfect the
+        whole time, because it never lost sync.
+        """
+        with self.lock:
+            if self.pending is None or self.f is not None:
+                return
+            seconds = self.pending[0]
+            started = datetime.datetime.now()
             path = os.path.join(self.directory, self._name(started))
             try:
                 f = open(path, "wb")
             except IOError as e:
-                return [], "could not create %s: %s" % (path, e)
+                self.pending = None
+                self.fail = "could not create %s: %s" % (path, e)
+                return
+            self.pending = None
             self.f, self.path, self.started = f, path, started
             self.bytes = self._unflushed = 0
             self.duration = seconds
             # Monotonic, so a clock step mid-run cannot stretch or shorten
-            # the experiment.
+            # the experiment. It starts now, not when the button was pressed:
+            # the run is what was recorded, not the wait for a packet.
             self.deadline = None if seconds is None else time.monotonic() + seconds
             if seconds is not None:
                 self._timer = threading.Timer(seconds, self._time_is_up)
                 self._timer.daemon = True
                 self._timer.start()
-            cuanto = ("for " + human_duration(seconds)) if seconds else "until stopped"
-            lineas = ["recording %s" % cuanto,
-                      "writing %s" % os.path.basename(path)]
-            if libre is not None:
-                lineas.append("%s free in %s"
-                              % (human_bytes(libre), self.directory or "."))
-            return lineas, ""
 
     def _time_is_up(self):
         """Fired by the timer thread when the requested time has elapsed."""
@@ -851,6 +886,9 @@ class Recorder(object):
 
     def _stop_locked(self, reason):
         if self.f is None:
+            if self.pending is not None:
+                self.pending = None
+                return ["the armed recording was cancelled before it began"], ""
             return [], "not recording"
         if self._timer is not None:
             self._timer.cancel()      # harmless if it is the one calling us
@@ -1832,6 +1870,9 @@ def run(args):
                 print("capture finished: the {0} requested have elapsed"
                       .format(human_duration(args.duration)))
                 break
+            # Between packets: the only safe place to open a recording.
+            if recorder is not None:
+                recorder.at_boundary()
             head = recv_exactly(sock, 8, deadline)
             if head is TIMEOUT:
                 continue          # the deadline check at the top decides
