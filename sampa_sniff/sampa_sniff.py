@@ -1353,7 +1353,10 @@ class Panel(object):
 
     def start(self):
         self.thread.start()
-        print("live view: http://localhost:{0}/".format(self.port))
+        # 127.0.0.1 and not "localhost": on Windows that name resolves to
+        # ::1 first and this server listens on IPv4 only, so the browser
+        # is refused while everything is in fact working.
+        print("live view: http://127.0.0.1:{0}/".format(self.port))
         print("  data goes over a WebSocket; if that fails, the page")
         print("  falls back to polling every 0.7 s and looks the same")
         print("")
@@ -1364,7 +1367,7 @@ class Panel(object):
         # refused even when everything else is fine.
         print("      ssh -L {0}:127.0.0.1:{0} USER@THIS_MACHINE"
               .format(self.port))
-        print("  then open http://localhost:{0}/ in your browser."
+        print("  then open http://127.0.0.1:{0}/ in your browser."
               .format(self.port))
         print("  The WebSocket goes through the tunnel too: it is just TCP.")
         print("  If it does not load, check the ssh terminal: it says why.")
