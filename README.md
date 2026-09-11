@@ -232,3 +232,8 @@ Everything here — code, comments, identifiers and documentation — is in
 English so the project can be picked up anywhere. A Spanish-language copy of
 the tree, from which this one was translated, is kept alongside as
 `sampa_daq_espanol`.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). The bundled `tomlc99` keeps its own MIT licence,
+reproduced in the header of `sampa_cfg/third_party/toml.c` and `toml.h`.
