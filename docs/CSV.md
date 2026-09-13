@@ -86,7 +86,7 @@ cursor that reads out values.
 python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --web --board
 ```
 
-serves the same page at `http://localhost:8080/`, updating as data arrives,
+serves the same page at `http://127.0.0.1:8080/`, updating as data arrives,
 plus a **Board status** section. Details in [SNIFF.md](SNIFF.md).
 
 ---

@@ -385,12 +385,17 @@ separates channels carrying signal from channels sitting in noise.</p>
 <div id="board">
 <h2>Board status</h2>
 <p class="sub">What <code>daqstat</code> answers on the board, over ssh. It
-refresca solo. Esto no viene por el puerto 1000: es una consulta aparte.</p>
+refreshes by itself. This does not come over port 1000: it is a separate query.</p>
 <div class="data" id="daq-summary"></div>
 <div id="daq-table"></div>
 <div id="daq-notes"></div>
 <details id="daq-raw"><summary>show the raw dump</summary><pre></pre></details>
+</div>
 
+<!-- The two panels below are siblings of #board, not children. #board stays
+     hidden until the ssh query answers; nested inside it, they stayed hidden
+     too, even though neither needs the board to appear -- recording only
+     writes what already arrives on port 1000. -->
 <div id="control">
 <h3>Zero suppression</h3>
 <p class="sub">The threshold is in <b>ADC counts</b>, the natural unit. The chip
@@ -429,7 +434,6 @@ how long it lasted. Leave the time empty to record until you press stop.</p>
 <div class="estado" id="rec-estado"></div>
 <div class="barra" id="rec-barra" hidden><i></i></div>
 <div class="ultima" id="rec-ultima"></div>
-</div>
 </div>
 
 </div>

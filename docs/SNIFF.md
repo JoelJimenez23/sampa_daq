@@ -13,7 +13,7 @@ it — on Linux, on the lab's Windows box, or on the board itself pointing at
 FPGA ──> sampa_server (port 1000) ──> sampa_sniff ──┬──> screen
                                                     ├──> .bin  (lossless)
                                                     ├──> .csv  (for analysis)
-                                                    └──> http://localhost:8080
+                                                    └──> http://127.0.0.1:8080
 ```
 
 ---
@@ -52,7 +52,7 @@ environment, no dependencies. It behaves the same on Linux and on Windows.
 | `--zs-pre` | N | 1 | samples kept before each pulse, 0 to 3 |
 | `--zs-post` | N | 2 | samples kept after each pulse, 0 to 7 |
 | `--allow-writes` | — | no | let the web page record and change the chip. Binds the server to 127.0.0.1 |
-| `--record-dir` | DIR | `.` | where recordings started from the page are written |
+| `--record-dir` | DIR | `.` | where recordings started from the page are written. Created at start-up if it does not exist |
 | `--sampa-cfg` | PATH | `./sampa_cfg` | where `sampa_cfg` lives on the board |
 | `--csv` | PREFIX | — | write `PREFIX_packets.csv` |
 | `--csv-long` | — | no | also `PREFIX_samples.csv`, one row per sample |
@@ -102,7 +102,8 @@ python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --save run1.bin --web
 
 - `-q` does not print a line per packet (there are thousands per second)
 - `--save` keeps the lossless copy
-- `--web` brings up the live view at `http://localhost:8080/`
+- `--web` brings up the live view at `http://127.0.0.1:8080/`. Type the
+  address, not `localhost`: see *The page does not load* under Troubleshooting
 
 Then, in **another terminal** on the board, start the acquisition
 (`daqstat links auto` and `daqstat acquire 2048` — see [DAQSTAT.md](DAQSTAT.md)).
@@ -218,6 +219,19 @@ python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --web --board --allow-wr
 > without the flag, `/control` answers 403. A stale browser tab cannot poke
 > the chip either.
 
+The panel appears as soon as the receiver is up, whether or not the board
+answers. It is mounted from `/rec`, which is local and instant, and it sits
+beside the board status rather than inside it. Earlier versions mounted it
+from the board query, which goes over ssh: a slow or unreachable board left
+the controls hidden with `--allow-writes` set, and it looked random. Without
+`--board` the panel still appears, with the chip buttons disabled and a line
+saying why.
+
+When `/control` refuses something — a threshold out of range, a missing
+`--board`, a typo in a duration — it answers **400** with the reason, which the
+panel echoes under the buttons. **500** is kept for a genuine fault in the
+receiver; if you ever see one, that is a bug worth reporting.
+
 ### Recording from the page
 
 With `--allow-writes` the live view grows a **Record an experiment** panel:
@@ -247,6 +261,58 @@ summary: file, start, end, duration, size, and why it stopped.
 
 The duration accepts the same forms as `--duration`, and is checked in the
 browser as well as on the receiver so a typo says so straight away.
+
+#### Pressing record arms it; the file opens at the next packet
+
+The recording does **not** start at the instant you press the button. It is
+armed, and the file is opened the next time the receive loop is between two
+packets. In practice that is microseconds later. The duration is counted from
+that moment, so a 30-minute run holds 30 minutes of data, not 30 minutes
+minus the wait.
+
+The reason is that a `.bin` has no sync markers. Whoever reads it takes the
+first 8 bytes as a header and trusts them. The web thread that handles the
+button has no idea whether the receive loop is between packets, halfway
+through a header or halfway through a payload, and a file that begins a few
+bytes off decodes into channels that were never there. Measured by shifting a
+good capture of the 12 `bench.toml` channels:
+
+| File starts | Channels decoded |
+|---|---|
+| on a packet boundary | 0, 1, 2, 8, 9, 11, 16, 17, 18, 24, 25, 26 |
+| 3 bytes late | 0, 3, 16, 19 |
+| 5 bytes late | 8, 17, 20, 24 |
+| 7 bytes late | 3, 16, 19 |
+
+The live view looks perfect the whole time, because it never lost sync; only
+the file is wrong. **Recordings made from the page before this was fixed
+(2026-09-11) are affected and cannot be repaired** — the start of the first
+packet is simply not in the file. Captures made with `--save` are fine: they
+begin with the connection, which begins on a packet.
+
+While armed, the panel says *armed · it starts at the next packet* and the
+button reads **stop**, which cancels it. If it stays armed, nothing is
+arriving: start an `acquire` on the board.
+
+#### Disk space
+
+The raw stream is large, and a virtual machine's disk fills fast:
+
+| Configuration | `.bin` per minute |
+|---|---|
+| 32 channels, no zero suppression | ~10.3 GB |
+| 32 channels, threshold 120 | ~1.0 GB |
+
+When a recording is armed the echo reports the free space where it will be
+written (`7.4 GB free in C:\sampa\runs`), and it refuses to start with less
+than 64 MB. A disk that fills up halfway **ends the recording, not the
+session**: the file written so far is closed and renamed with the duration it
+really covers, the panel shows `write failed: [Errno 28] No space left on
+device`, and the live view carries on.
+
+`--record-dir` is created when the receiver starts. If it cannot be created,
+`sampa_sniff` refuses to start and says why, instead of letting the first press
+of **record** discover it.
 
 **Recording needs no `--board`**: it saves the stream that is already arriving
 on port 1000. `--board` is only needed for the chip controls.
@@ -326,7 +392,7 @@ lost nothing. The real losses in this chain happen *earlier*, inside the SAMPA
 python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --web
 ```
 
-Brings up a server at `http://localhost:8080/` with all 32 waveforms and four
+Brings up a server at `http://127.0.0.1:8080/` with all 32 waveforms and four
 views: **waveform**, **amplitude over time**, **spectrum** and **peak
 amplitude**. Click any chart to open it large, with zoom and a cursor.
 
@@ -360,8 +426,9 @@ comes from, which is the normal case. With a value it points elsewhere:
 
 If the board does not answer, the section says why (`No route to host`,
 `cannot find the 'ssh' program`, `the board did not answer in 10 s`) rather
-than going blank. The rest of the page keeps working: the data and the board
-view are independent paths.
+than going blank. The rest of the page keeps working, including the zero
+suppression and recording panels: the data, the controls and the board view
+are independent paths.
 
 Without `--board` the section does not appear, and neither does it in an HTML
 file saved to disk: there is nobody on the other side to ask.
@@ -375,7 +442,7 @@ an SSH tunnel:
 ssh -L 8080:127.0.0.1:8080 USER@THE_LAB_PC
 ```
 
-then open `http://localhost:8080/` in your browser. The WebSocket goes through
+then open `http://127.0.0.1:8080/` in your browser. The WebSocket goes through
 the tunnel too; it is just TCP.
 
 **Write `127.0.0.1`, not `localhost`.** That name is resolved by the remote
@@ -403,6 +470,46 @@ is missing. Run `./daqstat` on the board and read the *what to look at* block.
 **A `ConnectionAbortedError` / `WinError 10053` traceback.** That was noise
 from the HTTP server when the browser closed a connection (a reload, switching
 tabs). It is silenced now; real errors are still shown.
+
+**The configuration panel does not appear.** It needs `--allow-writes`. Open
+`http://127.0.0.1:8080/rec` in the browser: it must contain `"writable": true`
+and `"hasBoard"`. If `writable` is false the flag did not reach the program;
+if `hasBoard` is missing, the machine is running an old copy — copy **both**
+`sampa_sniff.py` and `sampa_view.py` (the first imports the second) and reload
+with Ctrl+F5.
+
+**The page does not load in the browser of the PC that runs the sniffer, but
+it does through an ssh tunnel.** Then the server is fine: the far end of the
+tunnel connects to `127.0.0.1:8080` on that very PC. The browser is the
+problem. In order of likelihood: typing `localhost` (it resolves to `::1` on
+Windows and the server is IPv4 only); a proxy with no exception for
+`127.0.0.1`; a browser installed from the Microsoft Store, which Windows does
+not let reach loopback; or the address typed without `http://`, which the
+browser sends to its search engine. If `google.com` does not load either, it is
+that machine's browser or network, not the sniffer.
+
+**Windows says "The system cannot execute the specified program".** `python`
+and `python3` resolve to the Microsoft Store stubs in
+`...\AppData\Local\Microsoft\WindowsApps\`, which are not interpreters.
+Check with `where python`. Open the Python that works from the Start menu, run
+`import sys; print(sys.executable)`, and use that full path. To fix it for
+good, turn off the `python.exe` and `python3.exe` *App execution aliases* in
+Settings and add that directory to `Path`.
+
+**The browser console shows `POST /control 400`.** Not a crash: the receiver
+refused the request and the reason is in the panel's echo line, or in the
+response body in the *Network* tab.
+
+**A recording decodes into two or three channels that make no sense.** It
+was recorded from the page with a version older than 2026-09-11, which could
+start the file halfway through a packet. See *Pressing record arms it*. It
+cannot be repaired; record it again.
+
+**"No space left on device", or a recording that stopped with `write
+failed`.** On Windows, deleted files go to the Recycle Bin and still take the
+space: empty it. Check that `--record-dir` is on the drive you freed
+(`dir /s C:\sampa\runs`). For long runs use zero suppression, which divides
+the volume by about ten.
 
 **Channels 10 and 23 come out flat.** Not a sniffer or configuration fault:
 all 31 channel registers are identical to those of their healthy neighbours.

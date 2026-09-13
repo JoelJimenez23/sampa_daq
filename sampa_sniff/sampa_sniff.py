@@ -1886,7 +1886,7 @@ def run(args):
                     # closing: mentioning a timeout here was misleading.
                     print("sampa_server closed the connection")
                 if panel is not None:
-                    print("the live view stays up at http://localhost:{0}/"
+                    print("the live view stays up at http://127.0.0.1:{0}/"
                           " -- Ctrl-C to quit".format(args.web))
                 break
             w0, w1 = struct.unpack("<II", head)
@@ -2011,7 +2011,7 @@ def main(argv=None):
                         "raw. huffman cannot be decoded: it is flagged and no "
                         "samples are invented")
     p.add_argument("--web", type=int, nargs="?", const=8080, metavar="PORT",
-                   help="serve the live view at http://localhost:PORT "
+                   help="serve the live view at http://127.0.0.1:PORT "
                         "(default 8080) while data is being received")
     p.add_argument("--board", nargs="?", const="", metavar="USER@IP",
                    help="with --web, add the DAQ status section: runs daqstat "
