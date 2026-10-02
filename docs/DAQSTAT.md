@@ -270,6 +270,32 @@ for a run that is meant to keep up.
 If the DAS is active it also pulses `SMP_CFG_REG[20]` from 0 to 1 around the
 start to re-synchronise it, exactly as the GUI does.
 
+#### You do not need a trigger on the serial links
+
+In `p_acquire` (`data_manager.vhd`) only the DAS path looks at the trigger:
+
+```vhdl
+if (i = 11) then
+  acquire(i) <= trg;      -- the DAS path, and only it
+else
+  acquire(i) <= '1';      -- links 0..10 never look at trg
+end if;
+```
+
+This bench reads the serial links, so `daqstat trigger` does nothing for it.
+
+And on the chip side a trigger is not merely useless, it is **harmful**: the
+chip is in continuous mode (`VACFG[0]`, part of the `0x31` in `bench.toml`),
+which auto-generates a trigger at the end of every time window. Section 1.8 of
+the specification says that a trigger arriving during continuous mode **ends
+the current window immediately** and starts a new one. That mechanism exists to
+align the windows of several SAMPA chips, not to acquire data: firing it during
+a run just truncates a window.
+
+> The *what to look at* block of `daqstat` still suggests `bxsync` and
+> `trigger` after `acquire`. For a serial-link setup that advice is stale;
+> `acquire` is the only one that does anything.
+
 ### Commands to the SAMPA
 
 ```sh
@@ -277,6 +303,12 @@ start to re-synchronise it, exactly as the GUI does.
 ./daqstat bxsync           # bunch-crossing sync              (= 5)
 ./daqstat reset            # SAMPA reset                      (= 2)
 ```
+
+`trigger` is **not needed on this bench** and truncates a time window if the
+chip is in continuous mode: see *You do not need a trigger on the serial links*
+above. `bxsync` resets the chip's bunch-crossing counter, which matters when
+aligning several chips; with a single chip it only renumbers the `bx` field.
+`reset` wipes the chip configuration, so `bench.toml` has to be reapplied.
 
 ### Utilities
 

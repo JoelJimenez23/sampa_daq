@@ -157,8 +157,21 @@ python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --web --board --save run
 # 2. board
 ./daqstat                  # STATUS_REG must read 0x0000000F
 ./daqstat links auto
-./daqstat acquire 2048
+./daqstat acquire 2048     # one burst of 25.6 ms
 ```
+
+For a run that keeps going with no further intervention, ask for an unlimited
+burst instead. The chip already self-triggers (continuous mode, `VACFG[0]`), so
+nothing else has to be issued — **no triggers, no loop**:
+
+```sh
+./daqstat acquire 0        # 2^32 packets per link, about 15 hours
+```
+
+Mind the bandwidth in that mode: the four links deliver 160 MB/s and Ethernet
+carries about 118 MB/s, so with 32 channels the DDR3 ring fills and `dropped`
+climbs. Zero suppression, or fewer channels, makes it sustainable. See
+[docs/DAQSTAT.md](docs/DAQSTAT.md).
 
 And afterwards, without going back to the board:
 
@@ -225,6 +238,29 @@ run `make regs`**, never the generated `.c`.
 - **Huffman compression cannot be decoded**: section 1.5.1 of the SAMPA
   specification, which should carry the code table, is empty.
   `sampa_sniff.py` flags those packets instead of inventing samples.
+- **`daqstat trigger` does nothing here, and can hurt.** The serial links
+  ignore the trigger in the firmware, and on a chip in continuous mode a
+  trigger cuts the current time window short. Only `acquire` is needed.
+- The chip's card has **its own power supply**, which does not come back by
+  itself after a mains cut. An `i2c_master did not respond` timeout is usually
+  that, not a configuration problem.
+
+## Where everything else lives
+
+This repository holds the terminal tools. The rest of the system is elsewhere
+on this machine:
+
+| What | Where |
+|---|---|
+| FPGA Quartus project (VHDL, `hps.qsys`) | `~/Proyectos/SAMPA/trunk/` |
+| The data path inside the FPGA | `~/Proyectos/SAMPA/trunk/hdl/` — `data_manager.vhd`, `mem_write.vhd`, `assembler.vhd`, `serial_recv.vhd` |
+| The I2C master (how the chip is reached) | `~/Proyectos/SAMPA/trunk/ip/i2c_master/` |
+| `sampa_server` source (the TCP server on the board) | `~/Proyectos/SAMPA/software/sampa_apps/Source/SAMPA_server-*/SAMPA_server/sampa_server.c` |
+| The original C# GUI this project replaces | `~/Proyectos/SAMPA/software/sampa_apps/SAMPA communicator/` |
+| SAMPA specification, as a PDF and as notes | `~/Proyectos/SAMPA/brain/` — the `vault/` subdirectory is an indexed set of notes per chapter, starting at `vault/00-Mapa-Cerebral.md` |
+| Spanish-language copy of this tree | `~/Proyectos/SAMPA/software/sampa_apps/sampa_daq_espanol/` |
+| Cross-compiler | `~/toolchains/armv7-eabihf--glibc--stable-2024.05-1` |
+| Quartus 25.1std | `/home/joel/altera_lite/25.1std/quartus/bin/` |
 
 ## Language
 
