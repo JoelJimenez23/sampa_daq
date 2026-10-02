@@ -231,7 +231,41 @@ acquired; to keep taking data you must issue `acquire` again. The counters do
 not start rising on their own, and that is not a fault — it is what starting a
 burst means.
 
-`acquire 0` means zero packets, not "unlimited". It warns about that.
+**`acquire 0` is the continuous mode.** Zero does not mean zero: `p_pkt_cntr`
+in `data_manager.vhd` reads it as unlimited and sets the target to
+`0xFFFFFFFF`, which is 2^32 packets per link, about **15 hours** at 12.5 µs
+each:
+
+```vhdl
+if (unsigned(acq_len) = 0) then
+  pkt_count_end(11 downto 0) <= (others => x"FFFFFFFF");
+else
+  pkt_count_end(i) <= unsigned(pkt_count(i)) + unsigned(acq_len);
+end if;
+```
+
+Acquisition stays armed while the counter is below that target, the link is
+enabled and a client is connected:
+
+```vhdl
+if ((unsigned(pkt_count(i)) < unsigned(pkt_count_end(i)))
+    and (enable(i) = '1') and (client_conn = '1')) then
+  acquire(i) <= '1';
+```
+
+So `./daqstat acquire 0` streams until something stops it. There is no "stop"
+command: to end it, start a finite burst (`daqstat acquire 1`) and let it
+finish.
+
+> Earlier versions of this manual and of `daqstat` claimed the opposite —
+> that zero meant zero. That was written without reading the firmware, and it
+> was wrong.
+
+**Mind the bandwidth in continuous mode.** The four links deliver 160 MB/s and
+Ethernet carries about 118 MB/s, so with 32 channels the DDR3 ring (128 MB)
+fills up and `dropped` starts climbing. That is expected, not a fault: the
+burst mode is what normally hides it. Use zero suppression, or fewer channels,
+for a run that is meant to keep up.
 
 If the DAS is active it also pulses `SMP_CFG_REG[20]` from 0 to 1 around the
 start to re-synchronise it, exactly as the GUI does.
@@ -265,7 +299,8 @@ The board is ARM and the PC is x86, so it has to be cross-compiled. The
 toolchain and the whole setup are covered in `README.md`; for `daqstat`:
 
 ```sh
-make daqstat        # builds bin/daqstat, a static ARM binary
+make                # builds both board binaries
+make daqstat        # or just this one, a static ARM binary
 file bin/daqstat    # ELF 32-bit LSB, ARM  <- check this
 scp bin/daqstat root@10.0.163.205:/home/root/
 ```

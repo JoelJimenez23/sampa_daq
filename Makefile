@@ -52,6 +52,13 @@ OBJS        = $(patsubst $(CFG_DIR)/%.c,$(BUILD_DIR)/%.o,$(CFG_SRC)) \
 # the repository so this builds without needing that other project alongside.
 RESOURCES  ?= $(REG_DIR)
 
+# The default goal must build both board binaries. Without this, the first
+# rule in the file wins, which used to be the directory below: plain "make"
+# created build/ and reported success without compiling a thing.
+.DEFAULT_GOAL := all
+
+all: sampa_cfg daqstat
+
 $(BUILD_DIR) $(BIN_DIR):
 	@mkdir -p $@
 
@@ -152,4 +159,4 @@ regs:
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)/sampa_cfg_pc
 
-.PHONY: check check-all native cross-check regs clean
+.PHONY: all check check-all native cross-check regs clean

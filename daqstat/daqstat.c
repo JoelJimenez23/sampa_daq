@@ -174,8 +174,12 @@ static void dump_status(void)
   /* The field counts packets PER LINK. Since each link carries 8 channels,
    * one readout of all 32 costs 8 packets: hence the /8. */
   printf("  packets to acquire   : %u per link", ctl >> 16);
+  /* Zero is NOT "nothing": p_pkt_cntr in data_manager.vhd sets the target to
+   * 0xFFFFFFFF when acq_len is 0, which is 2^32 packets per link, about 15
+   * hours. It is the firmware's continuous mode. The register alone cannot
+   * say whether a burst was ever started, so word it carefully. */
   if ((ctl >> 16) == 0)
-    printf("   <-- ZERO: it will not acquire anything\n");
+    printf("   <-- 0 = unlimited (continuous) once a burst is started\n");
   else
     printf("  (%u readouts, %.1f ms)\n", (ctl >> 16) / 8u,
            (ctl >> 16) * 0.0125);
@@ -226,8 +230,10 @@ static void dump_status(void)
            "  without one nothing is pushed. Connect the sniffer, or to\n"
            "  exercise the FPGA alone:  daqstat fakeclient on\n");
   } else if ((ctl >> 16) == 0) {
-    printf("  The packet counter to acquire is zero. Start with a real\n"
-           "  count:  daqstat acquire 2048\n");
+    printf("  The acquire count is 0, which the firmware reads as UNLIMITED.\n"
+           "  If no packet is arriving, the burst was never started:\n"
+           "      daqstat acquire 0       <- continuous, until stopped\n"
+           "      daqstat acquire 2048    <- one burst of 25.6 ms\n");
   } else {
     printf("  Links enabled and in sync. If the packet counters do not\n"
            "  rise, you still need to start and trigger:\n"
@@ -266,7 +272,9 @@ static int do_acquire(unsigned long n)
 
   printf("acquisition started (packets: %lu)\n", n);
   if (n == 0)
-    printf("  NOTE: zero packets means zero, not \"unlimited\".\n");
+    printf("  CONTINUOUS: the firmware takes 0 as 2^32 packets per link,\n"
+           "  about 15 hours. It does not stop by itself; to stop it, start\n"
+           "  a finite burst (daqstat acquire 1) and let it finish.\n");
   return 1;
 }
 
@@ -283,6 +291,7 @@ static void usage(void)
     "                           (default 2048). Each link carries 8 channels,\n"
     "                           so that is N/8 readouts, i.e. N*12.5 us.\n"
     "                           The burst ends by itself: to continue, acquire again\n"
+    "  daqstat acquire 0        CONTINUOUS: 0 means unlimited to the firmware\n"
     "  daqstat trigger          event trigger\n"
     "  daqstat bxsync           bunch-crossing sync\n"
     "  daqstat fifoclear        clear the FIFO-full flag\n"
