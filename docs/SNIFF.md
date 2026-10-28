@@ -46,7 +46,6 @@ environment, no dependencies. It behaves the same on Linux and on Windows.
 | `--channel` | N | — | filter by channel |
 | `--only-problems` | — | no | only suspicious packets |
 | `--raw` | N | — | dump the first N words uninterpreted, then exit |
-| `-d`, `--duration` | TIME | — | capture for exactly this long, then stop |
 | `--save` | [FILE] | — | save the stream losslessly. With no name, one is built from the run's start and end times |
 | `--zs` | COUNTS \| off | — | set the zero-suppression threshold on the chip, in ADC counts. Needs `--board` |
 | `--zs-pre` | N | 1 | samples kept before each pulse, 0 to 3 |
@@ -61,6 +60,9 @@ environment, no dependencies. It behaves the same on Linux and on Windows.
 | `--web` | [PORT] | 8080 | serve the live view over HTTP |
 | `--board` | [USER@IP] | `root@<host>` | add the DAQ status, running `daqstat` over ssh |
 | `--daqstat` | PATH | `./daqstat` | where `daqstat` lives on the board |
+| `--no-fdir` | — | no | with `--board`, leave out the fault monitor banner |
+| `--fdir-state` | DIR | `/home/root/sampa_fdir_state` | where the fault monitor (`sampa_fdir`) keeps its files on the board |
+| `--fdir-dir` | DIR | — | read the fault monitor's files from a local directory instead (to try the page with no board, or when running on the board) |
 | `-h`, `--help` | — | — | help |
 
 ### Exit status
@@ -121,27 +123,17 @@ same, so you can reprocess a capture as often as you like.
 
 ---
 
-## Timed captures
+## Saving a capture
 
-A run of an exact length, which is what an experiment usually needs:
+`--save` writes the whole stream, exactly as it arrives, from the moment the
+program connects until it ends (Ctrl-C, or the server closing):
 
 ```sh
-python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --duration 30m --save
+python3 sampa_sniff/sampa_sniff.py 10.0.163.205 1000 -q --save
 ```
 
-`--duration` accepts the two shapes people actually write:
-
-| Form | Examples |
-|---|---|
-| clock | `01:30:00` (1 h 30 min), `90:00` (90 min), `2:30` (2 min 30 s) |
-| suffixes | `45s`, `5m`, `2h`, `1h30m`, `2h5m30s` |
-
-A bare number is seconds.
-
-The stop time is measured with a **monotonic** clock, so an NTP correction or
-a daylight-saving change in the middle of a long run cannot stretch or shorten
-the experiment. It is also checked during silent stretches: if the board sends
-nothing for a while, the capture neither gives up early nor overruns.
+An experiment of a **set length** is not set here: type the duration in the web
+page and press record. See [Recording from the page](#recording-from-the-page).
 
 ### The file names itself after the experiment
 
@@ -259,8 +251,19 @@ name always describes what actually happened, even for a run that was cut short
 or ended when the receiver shut down. When it finishes, the panel shows the
 summary: file, start, end, duration, size, and why it stopped.
 
-The duration accepts the same forms as `--duration`, and is checked in the
-browser as well as on the receiver so a typo says so straight away.
+The duration is typed in the page's **Record an experiment** panel and accepts
+the two shapes people actually write:
+
+| Form | Examples |
+|---|---|
+| clock | `01:30:00` (1 h 30 min), `90:00` (90 min), `2:30` (2 min 30 s) |
+| suffixes | `45s`, `5m`, `2h`, `1h30m`, `2h5m30s` |
+
+A bare number is seconds. It is checked in the browser as well as on the
+receiver, so a typo says so straight away. The stop time is measured with a
+**monotonic** clock, so an NTP correction or a daylight-saving change in the
+middle of a long run cannot stretch or shorten the experiment, and a run ends
+on time even when the board is sending nothing.
 
 #### Pressing record arms it; the file opens at the next packet
 
@@ -396,6 +399,51 @@ Brings up a server at `http://127.0.0.1:8080/` with all 32 waveforms and four
 views: **waveform**, **amplitude over time**, **spectrum** and **peak
 amplitude**. Click any chart to open it large, with zoom and a cursor.
 
+### Saving what the large window shows
+
+**save .txt**, in the large window, downloads the frame on screen at that
+moment as a tab-separated text file, **cut to the current zoom**: only the
+points whose x lies in the visible range. The values are the real ones, never
+the min/max band the plot draws when there are more samples than pixels.
+
+| View | Columns |
+|---|---|
+| waveform | `sample`, `t_us`, `adc` |
+| amplitude over time | `readout`, `t_ms`, `max_adc` |
+| spectrum, peak amplitude | `adc`, `count` |
+| channel comparison | `adc` (or `adc_minus_base`), then one column per curve |
+
+Lines starting with `#` say what the file holds: the capture, when it was
+saved, the channel and link, the readout the waveform comes from (latest,
+highest amplitude, or the one the scrubber is on) and the zoom range. `t_us`
+uses the same time base as the CSV files (`readout × 100 µs + sample × 0.1 µs`).
+The file is built in the browser, so it works live, with `-f` and in an
+`.html` made by `sampa_view.py`; it lands in the browser's download folder,
+on the machine where the browser runs.
+
+```
+sampa_ch01_wave_rd235_x100-160_091004.txt
+```
+
+### Comparing channel spectra
+
+Under **ADC value spectrum**, tick two or more channels (up to eight) and press
+**compare**. The large window then shows their histograms together, one colour
+per channel, kept for as long as the channel stays ticked:
+
+- **overlay** draws each spectrum as an outline, so none hides the others;
+- **difference** draws *reference − channel* for every other ticked channel,
+  with a line at zero where they agree. The reference is chosen in the window;
+- **normalized** (default) divides each histogram by that channel's number of
+  samples, so channels that carried different amounts of data compare by
+  shape; **counts** shows the raw numbers;
+- **ADC code** (default) keeps the real axis; **aligned to baseline**
+  subtracts each channel's baseline (its most repeated value), so channels
+  with different pedestals line up and only the noise shape is compared.
+
+Zoom, pan, the cursor and **save .txt** work as for a single channel; live,
+the comparison keeps updating with the zoom held.
+
 Data travels over a **WebSocket**. If that fails (an odd proxy, an old
 browser), the page falls back to polling every 0.7 s and looks the same.
 
@@ -432,6 +480,39 @@ are independent paths.
 
 Without `--board` the section does not appear, and neither does it in an HTML
 file saved to disk: there is nobody on the other side to ask.
+
+### The fault monitor, inside the same page
+
+With `--board`, the page also shows a banner at the top with what the fault
+monitor (`sampa_fdir`, running on the board) is doing. It is written for
+people who only want their data, not for the technician:
+
+| Colour / label | Meaning |
+|---|---|
+| green **OK** | everything is normal |
+| grey **WAITING** | the monitor is ready; the acquisition has not started |
+| amber **REPAIRING** | a problem was detected and the system is fixing it by itself |
+| amber **ATTENTION** | something happened that the system cannot repair; it is only reported |
+| red **STOPPED** | the system stopped everything to protect the hardware; a technician must act |
+| grey **NO CONTACT** | the monitor is not reporting (not running, or the board is unreachable) |
+
+Under the label: the **problem detected**, the **action** the system took, and
+whether **your data** may have been affected. *Recent events* lists the last
+few things that happened. **More information** opens the live journal of the
+monitor in a new tab (the same text as `./run_fdir.sh log -f` on the board),
+with *follow*, *only alerts*, *pause* and *copy*.
+
+It reads three files of the monitor (`status.json`, `events.jsonl`,
+`fdir.log` in `--fdir-state`) over the same ssh path as the board status; the
+board is asked at most every 2 s however many tabs are open. The wording lives
+in `sampa_health.py`; the monitor only reports stable codes. The page is
+read-only: it never changes anything on the board. Needs `sampa_health.py`
+next to `sampa_sniff.py`.
+
+To try it with no board and no chip, write a scenario with
+`sampa_fdir/tools/fake_fdir_state.py DIR --scenario repair` (also `ok`,
+`standby`, `bringup`, `reset`, `stopped`, `warn`, `tcp`, `stale`) and add
+`--fdir-dir DIR`.
 
 ### Watching it from another computer
 

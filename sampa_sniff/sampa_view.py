@@ -162,7 +162,7 @@ PAGINA = u"""<!doctype html>
 :root{--fondo:#fbfbfa;--paper:#fff;--ink:#1a1a18;--soft:#6b6b66;
       --line:#e2e2dd;--trace:#2f6f8f;--accent:#b4713d;--dead:#c9c9c4;
       --veil:rgba(26,26,24,.55);--reja:#eeeeea;--accent-tenue:#e4eef3}
-@mean (prefers-color-scheme:dark){:root{--fondo:#16161a;--paper:#1e1e23;
+@media (prefers-color-scheme:dark){:root{--fondo:#16161a;--paper:#1e1e23;
       --ink:#e8e8e4;--soft:#9a9a94;--line:#33333a;--trace:#6fb3d2;
       --accent:#d99a63;--dead:#4a4a52;--veil:rgba(0,0,0,.7);--reja:#2a2a31;
       --accent-tenue:#22323b}}
@@ -180,8 +180,8 @@ p.sub{color:var(--soft);margin:0 0 6px;font-size:13px}
 .data b{display:block;font-size:18px;font-weight:600}
 .data span{color:var(--soft)}
 .grid{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-top:14px}
-@mean(max-width:1100px){.grid{grid-template-columns:repeat(4,1fr)}}
-@mean(max-width:600px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:1100px){.grid{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:600px){.grid{grid-template-columns:repeat(2,1fr)}}
 .cell{background:var(--paper);border:1px solid var(--line);border-radius:6px;
        padding:6px 6px 4px;overflow:hidden;cursor:pointer;
        transition:border-color .12s,transform .12s}
@@ -323,6 +323,37 @@ td.bad{color:var(--accent);font-weight:600}
 kbd{font-family:inherit;border:1px solid var(--line);border-radius:3px;
     padding:0 4px;font-size:11px}
 
+/* --- comparing the spectra of several channels ---
+   One fixed colour per ticked channel, in the order of a validated
+   categorical palette (never cycled: at most eight channels). */
+:root{--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;
+      --s6:#008300;--s7:#6250d6;--s8:#e34948}
+@media (prefers-color-scheme:dark){:root{--s1:#3987e5;--s2:#d95926;--s3:#199e70;
+      --s4:#c98500;--s5:#d55181;--s6:#008300;--s7:#9085e9;--s8:#e66767}}
+.pick{margin:0 5px 0 0;vertical-align:-2px;cursor:pointer;accent-color:var(--trace)}
+.cell.sel{border-color:var(--trace)}
+#cmpbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px;
+        font-size:13px;color:var(--soft)}
+#cmpbar button{background:none;border:1px solid var(--line);color:var(--ink);
+      border-radius:5px;padding:3px 10px;font-size:12px;cursor:pointer;
+      font-family:inherit}
+#cmpbar button:hover:not(:disabled){border-color:var(--trace);color:var(--trace)}
+#cmpbar button:disabled{opacity:.5;cursor:default}
+#cmpctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;
+        padding:8px 16px;border-bottom:1px solid var(--line);font-size:12px;
+        color:var(--soft)}
+#cmpctl[hidden],#cmpctl [hidden]{display:none}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.seg button{background:none;border:0;color:var(--soft);font:inherit;font-size:12px;
+            padding:2px 10px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.activo{background:var(--accent-tenue);color:var(--trace)}
+#cmpctl select{font:inherit;font-size:12px;background:var(--paper);color:var(--ink);
+               border:1px solid var(--line);border-radius:4px;padding:1px 4px}
+#cmpleg{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--ink)}
+#cmpleg i{display:inline-block;width:16px;height:3px;border-radius:2px;
+          margin-right:6px;vertical-align:3px}
+
 /* --- bar de estado en live --- */
 #live{position:fixed;right:16px;bottom:16px;z-index:40;display:flex;
       align-items:center;gap:10px;background:var(--paper);
@@ -340,7 +371,37 @@ kbd{font-family:inherit;border:1px solid var(--line);border-radius:3px;
 .beat.parado{background:var(--dead);animation:none}
 .beat.caido{background:var(--accent);animation:none}
 @keyframes latir{0%,100%{opacity:1}50%{opacity:.25}}
-@mean (prefers-reduced-motion:reduce){.beat{animation:none}}
+@media (prefers-reduced-motion:reduce){.beat{animation:none}}
+
+/* fault monitor banner: colour is never the only signal, the pill says it too */
+:root{--fd-ok:#2f7a4f;--fd-work:#9a6a1f;--fd-bad:#a3322a;--fd-idle:#6b6b66}
+@media (prefers-color-scheme:dark){:root{--fd-ok:#6fc08f;--fd-work:#d9a24f;
+      --fd-bad:#e0736a;--fd-idle:#9a9a94}}
+#fdir{margin:14px 0 4px;background:var(--paper);border:1px solid var(--line);
+      border-left:4px solid var(--fd-idle);border-radius:6px;padding:10px 14px}
+#fdir[hidden]{display:none}
+#fdir.ok{border-left-color:var(--fd-ok)}
+#fdir.working,#fdir.attention{border-left-color:var(--fd-work)}
+#fdir.decision{border-left-color:var(--fd-bad)}
+.fd-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.fd-pill{font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 8px;
+         border-radius:10px;border:1px solid currentColor;color:var(--fd-idle)}
+#fdir.ok .fd-pill{color:var(--fd-ok)}
+#fdir.working .fd-pill,#fdir.attention .fd-pill{color:var(--fd-work)}
+#fdir.decision .fd-pill{color:var(--fd-bad)}
+#fd-head{font-size:15px}
+#fd-more{margin-left:auto;background:none;border:1px solid var(--line);
+         color:var(--ink);border-radius:12px;padding:3px 12px;font:inherit;
+         font-size:12.5px;cursor:pointer}
+#fd-more:hover{border-color:var(--trace);color:var(--trace)}
+.fd-row{display:flex;gap:10px;margin-top:6px;font-size:13.5px}
+.fd-k{flex:0 0 120px;color:var(--soft)}
+.fd-row[hidden]{display:none}
+#fd-hist{margin-top:8px;font-size:12.5px;color:var(--soft)}
+#fd-hist ul{margin:6px 0 0;padding-left:18px}
+#fd-hist li{margin:2px 0}
+.fd-ago{color:var(--soft);margin-left:6px}
+@media(max-width:600px){.fd-k{flex-basis:90px}}
 </style></head><body><div class="env">
 
 <div class="header">
@@ -348,6 +409,16 @@ kbd{font-family:inherit;border:1px solid var(--line);border-radius:3px;
 <p class="sub" id="sub-cab"></p>
 <div class="data" id="resumen"></div>
 </div>
+<section id="fdir" hidden aria-live="polite">
+<div class="fd-top"><span class="fd-pill" id="fd-pill"></span>
+<b id="fd-head"></b><span class="fd-ago" id="fd-since"></span>
+<button id="fd-more" title="open the live journal in a new tab">More information</button></div>
+<div class="fd-row" id="fd-r1"><span class="fd-k">Problem detected</span><span id="fd-problem"></span></div>
+<div class="fd-row" id="fd-r2"><span class="fd-k">Action</span><span id="fd-action"></span></div>
+<div class="fd-row" id="fd-r3"><span class="fd-k">Your data</span><span id="fd-data"></span></div>
+<details id="fd-hist"><summary>Recent events</summary><ul id="fd-list"></ul></details>
+</section>
+
 
 <h2>Waveform<span id="mode-wave" hidden><button data-mode="latest">latest</button><button data-mode="wave">highest amplitude</button></span></h2>
 <p class="sub">The highest-amplitude window of each channel. x axis: sample
@@ -365,7 +436,11 @@ number (0.1 &micro;s each). The thin line is the baseline.
 
 <h2>ADC value spectrum</h2>
 <p class="sub">How often each converter code appeared. A channel at
-rest gives a narrow peak at its baseline.</p>
+rest gives a narrow peak at its baseline. Tick two or more channels and press
+<b>compare</b> to overlay their spectra or see how they differ.</p>
+<div id="cmpbar"><span id="cmpTxt">no channel ticked</span>
+<button id="btCmp" disabled>compare</button>
+<button id="btCmpClr" disabled>clear</button></div>
 <div class="grid" id="g-esp"></div>
 
 <h2>Amplitude over time</h2>
@@ -452,7 +527,15 @@ how long it lasted. Leave the time empty to record until you press stop.</p>
     <button id="btPrev" title="previous channel">&larr;</button>
     <button id="btNext" title="next channel">&rarr;</button>
     <button id="btReset">reset zoom</button>
+    <button id="btSave" title="save what this window shows, with the current zoom, as a text file">save .txt</button>
     <button id="btClose">close</button>
+  </div>
+  <div id="cmpctl" hidden>
+    <span class="seg" id="cmpMode"><button data-v="overlay">overlay</button><button data-v="diff">difference</button></span>
+    <label id="cmpRefBox">reference <select id="cmpRef"></select></label>
+    <span class="seg" id="cmpNorm"><button data-v="1">normalized</button><button data-v="0">counts</button></span>
+    <span class="seg" id="cmpAlign"><button data-v="0">ADC code</button><button data-v="1">aligned to baseline</button></span>
+    <span id="cmpleg"></span>
   </div>
   <canvas id="grande"></canvas>
   <div id="scrub2">
@@ -464,8 +547,8 @@ how long it lasted. Leave the time empty to record until you press stop.</p>
   <div id="pie">
     <span id="readout">&nbsp;</span>
     <span><kbd>wheel</kbd> zoom &middot; <kbd>drag</kbd> pan &middot;
-      <kbd>doble clic</kbd> resetZoom &middot; <kbd>&larr;</kbd><kbd>&rarr;</kbd>
-      channel &middot; <kbd>Esc</kbd> closeModal</span>
+      <kbd>double-click</kbd> reset &middot; <kbd>&larr;</kbd><kbd>&rarr;</kbd>
+      channel &middot; <kbd>Esc</kbd> close</span>
   </div>
 </div></div>
 
@@ -478,7 +561,7 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 
 const TITLES = {wave:"Waveform", tmp:"Amplitude over time",
                 esp:"ADC spectrum", pul:"Peak amplitude"};
-const XAXIS = {wave:"sample number", tmp:"numero de readout",
+const XAXIS = {wave:"sample number", tmp:"readout number",
               esp:"ADC code", pul:"ADC code"};
 const YAXIS = {wave:"ADC code", tmp:"ADC code", esp:"count", pul:"count"};
 const TIPOS = ["wave", "tmp", "esp", "pul"];
@@ -518,13 +601,25 @@ function createGrids() {
       const b = document.createElement("b"); b.textContent = "ch " + ch;
       const sp = document.createElement("span");
       tit.append(b, sp);
+      /* The spectra can be compared: a tick box per cell. Clicking it must
+         not also open the channel, which is what a click on the cell does. */
+      let pick = null;
+      if (type === "esp") {
+        pick = document.createElement("input");
+        pick.type = "checkbox"; pick.className = "pick";
+        pick.title = "tick to compare this channel's spectrum with others";
+        pick.onclick = e => e.stopPropagation();
+        pick.onkeydown = e => e.stopPropagation();
+        pick.onchange = () => togglePick(ch, pick);
+        b.prepend(pick);
+      }
       const c = document.createElement("canvas");
       div.append(tit, c);
       cont.appendChild(div);
       const abrelo = () => openModal(type, ch);
       div.onclick = abrelo;
       div.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); abrelo(); } };
-      cells[type].push({div, sp, c, g:null, W:0, H:0,
+      cells[type].push({div, sp, c, pick, g:null, W:0, H:0,
                          cur:new Map(), wave:null, k:null, dirty:true});
     }
   }
@@ -721,6 +816,8 @@ function openModal(type, ch) {
      view is already a time series. */
   document.getElementById("scrub2").classList.toggle("on",
       SEEKABLE && type === "wave");
+  document.getElementById("cmpctl").hidden = true;
+  document.getElementById("btPrev").hidden = document.getElementById("btNext").hidden = false;
   document.getElementById("veil").classList.add("abierto");
   draw(); anima();
 }
@@ -736,19 +833,16 @@ function closeModal() {
   document.getElementById("veil").classList.remove("abierto");
   V.type = null;
   document.getElementById("scrub2").classList.remove("on");
+  document.getElementById("cmpctl").hidden = true;
 }
 
-function step(d) { if (V.type) openModal(V.type, (V.ch + d + 32) % 32); }
+/* A comparison has no "next channel": it is a set of channels. */
+function step(d) {
+  if (V.type && V.type !== "cmp") openModal(V.type, (V.ch + d + 32) % 32);
+}
 
 function draw() {
   if (!V.type) return;
-  const k = D.channels[V.ch];
-  document.getElementById("title").textContent =
-    TITLES[V.type] + " - channel " + V.ch;
-  document.getElementById("meta").textContent =
-    "link " + k.link + " | " + k.data + "/" + k.n + " packets with data ("
-    + k.pct + "%)" + (k.base !== "" ? " | base " + k.base : "");
-
   const r = window.devicePixelRatio || 1;
   const W = cv.clientWidth, H = cv.clientHeight;
   if (cv.width !== Math.round(W * r)) {
@@ -757,6 +851,14 @@ function draw() {
   const g = cv.getContext("2d");
   g.setTransform(r, 0, 0, r, 0, 0);
   g.clearRect(0, 0, W, H);
+  if (V.type === "cmp") { drawCompare(g, W, H); return; }
+
+  const k = D.channels[V.ch];
+  document.getElementById("title").textContent =
+    TITLES[V.type] + " - channel " + V.ch;
+  document.getElementById("meta").textContent =
+    "link " + k.link + " | " + k.data + "/" + k.n + " packets with data ("
+    + k.pct + "%)" + (k.base !== "" ? " | base " + k.base : "");
 
   if (!V.pts.length) {
     g.fillStyle = css("--soft"); g.font = "13px system-ui";
@@ -869,13 +971,13 @@ function draw() {
       g.stroke();
       g.fillStyle = css("--accent");
       g.beginPath(); g.arc(px(mej[0]), py(mej[1]), 3.5, 0, 6.284); g.fill();
-      const rd = modoOnda === "latest" ? k.latest_readout : k.wave_readout;
+      const rd = waveReadout(k);
       sal.textContent =
         V.type === "wave" ? "sample " + mej[0] + "  ->  ADC " + mej[1]
             + "   (t = " + (rd * 100 + mej[0] * 0.1).toFixed(1) + " us)"
       : V.type === "tmp"  ? "readout " + mej[0] + "  ->  max_adc " + mej[1]
             + "   (t = " + (mej[0] * 0.1).toFixed(1) + " ms)"
-      : "ADC " + mej[0] + "  ->  " + mej[1] + " veces";
+      : "ADC " + mej[0] + "  ->  " + mej[1] + " times";
     }
   } else {
     sal.innerHTML = "&nbsp;";
@@ -963,6 +1065,347 @@ for (const b of selOnda.querySelectorAll("button")) {
   b.classList.toggle("activo", b.dataset.mode === modoOnda);
 }
 
+/* ---------- comparing the spectra of several channels ---------- */
+
+/* Each ticked channel keeps one colour slot for as long as it stays ticked:
+   colour follows the channel, so unticking another one never repaints it.
+   Eight slots, never cycled. */
+const MAXCMP = 8;
+const SEL = new Map();                  /* channel -> colour slot, tick order */
+const CMP = {mode: "overlay", norm: true, align: false, ref: null, curves: []};
+
+function cmpSay(warn) {
+  const n = SEL.size;
+  document.getElementById("cmpTxt").textContent = warn || (n
+    ? "ticked: " + [...SEL.keys()].map(c => "ch " + c).join(", ")
+      + (n < 2 ? " (tick one more)" : "")
+    : "no channel ticked");
+  document.getElementById("btCmp").disabled = n < 2;
+  document.getElementById("btCmpClr").disabled = n === 0;
+}
+
+function togglePick(ch, box) {
+  if (box.checked) {
+    if (SEL.size >= MAXCMP) {
+      box.checked = false;
+      cmpSay("at most " + MAXCMP + " channels at once: untick one first");
+      return;
+    }
+    const used = new Set(SEL.values());
+    let s = 0;
+    while (used.has(s)) s++;
+    SEL.set(ch, s);
+  } else {
+    SEL.delete(ch);
+  }
+  cells.esp[ch].div.classList.toggle("sel", box.checked);
+  cmpSay();
+}
+
+/* One channel's spectrum as {x: y}. Normalised, each bin is the fraction of
+   that channel's samples, so channels that carried different amounts of
+   data can be compared by shape. Aligned, the x axis is the ADC code minus
+   the channel's own baseline (its most repeated value), so two channels
+   with different pedestals line up and only the shape of the noise is
+   compared. */
+function spectrumOf(ch) {
+  const k = D.channels[ch], m = new Map();
+  let tot = 0;
+  for (const [, n] of k.esp) tot += n;
+  const sh = CMP.align && k.base !== "" ? k.base : 0;
+  for (const [v, n] of k.esp) m.set(v - sh, CMP.norm ? (tot ? n / tot : 0) : n);
+  return m;
+}
+
+/* Overlay: one curve per channel. Difference: one curve per channel other
+   than the reference, reference minus it, in that channel's colour. */
+function cmpCurves() {
+  const chs = [...SEL.keys()];
+  if (!chs.includes(CMP.ref)) CMP.ref = chs[0];
+  const sp = new Map(chs.map(c => [c, spectrumOf(c)]));
+  if (CMP.mode === "overlay")
+    return chs.map(c => ({label: "ch " + c, col: "ch" + c,
+                          slot: SEL.get(c), m: sp.get(c)}));
+  const ref = sp.get(CMP.ref);
+  return chs.filter(c => c !== CMP.ref).map(c => {
+    const o = sp.get(c), m = new Map();
+    for (const x of new Set([...ref.keys(), ...o.keys()]))
+      m.set(x, (ref.get(x) || 0) - (o.get(x) || 0));
+    return {label: "ch " + CMP.ref + " − ch " + c,
+            col: "ch" + CMP.ref + "-ch" + c, slot: SEL.get(c), m};
+  });
+}
+
+/* Rebuild the curves from the current data. keep = hold the zoom, which is
+   what a live update or a change of units wants; aligning moves the whole
+   x axis, so it starts from the full view. */
+function refreshCompare(keep) {
+  const x0 = V.x0, x1 = V.x1;
+  CMP.curves = cmpCurves();
+  const xs = new Set();
+  for (const c of CMP.curves) for (const x of c.m.keys()) xs.add(x);
+  /* The zoom and pan code works on V.pts, so it gets the x positions. */
+  V.pts = [...xs].sort((a, b) => a - b).map(x => [x, 0]);
+  resetZoom();
+  if (keep && V.pts.length && x1 > x0) {
+    V.x0 = Math.max(x0, V.pts[0][0]);
+    V.x1 = Math.min(x1, V.pts[V.pts.length - 1][0]);
+    if (V.x1 - V.x0 < 2) resetZoom();
+  }
+  document.getElementById("cmpRef").innerHTML = [...SEL.keys()].map(c =>
+    '<option value="' + c + '"' + (c === CMP.ref ? " selected" : "") + ">ch "
+    + c + "</option>").join("");
+  document.getElementById("cmpRefBox").hidden = CMP.mode !== "diff";
+  document.getElementById("cmpleg").innerHTML = CMP.curves.map(c =>
+    '<span><i style="background:var(--s' + (c.slot + 1) + ')"></i>'
+    + esc(c.label) + (c.m.size ? "" : " (no data)") + "</span>").join("");
+}
+
+function segmented(id, get, set, keep) {
+  const box = document.getElementById(id);
+  const paint = () => {
+    for (const b of box.querySelectorAll("button"))
+      b.classList.toggle("activo", b.dataset.v === get());
+  };
+  for (const b of box.querySelectorAll("button"))
+    b.onclick = () => { set(b.dataset.v); paint(); refreshCompare(keep); draw(); };
+  return paint;
+}
+
+const cmpPaint = [
+  segmented("cmpMode", () => CMP.mode, v => { CMP.mode = v; }, true),
+  segmented("cmpNorm", () => CMP.norm ? "1" : "0", v => { CMP.norm = v === "1"; }, true),
+  segmented("cmpAlign", () => CMP.align ? "1" : "0", v => { CMP.align = v === "1"; }, false),
+];
+document.getElementById("cmpRef").onchange = e => {
+  CMP.ref = +e.target.value; refreshCompare(true); draw();
+};
+
+function openCompare() {
+  if (SEL.size < 2) return;
+  V.type = "cmp"; V.ch = null;
+  refreshCompare(false);
+  cmpPaint.forEach(f => f());
+  document.getElementById("cmpctl").hidden = false;
+  document.getElementById("btPrev").hidden = document.getElementById("btNext").hidden = true;
+  document.getElementById("scrub2").classList.remove("on");
+  document.getElementById("veil").classList.add("abierto");
+  draw(); anima();
+}
+
+document.getElementById("btCmp").onclick = openCompare;
+document.getElementById("btCmpClr").onclick = () => {
+  SEL.clear();
+  for (const cel of cells.esp) {
+    cel.pick.checked = false;
+    cel.div.classList.remove("sel");
+  }
+  cmpSay();
+};
+
+/* Histograms drawn as outlines (steps), not filled bars: filled bars of
+   several channels would hide one another. */
+function drawCompare(g, W, H) {
+  document.getElementById("title").textContent =
+    (CMP.mode === "diff" ? "Spectrum difference" : "Spectra compared")
+    + " - channels " + [...SEL.keys()].join(", ");
+  document.getElementById("meta").textContent =
+    (CMP.norm ? "fraction of each channel's samples" : "counts")
+    + (CMP.align ? " | ADC code minus baseline" : "");
+  const sal = document.getElementById("readout");
+
+  if (!V.pts.length) {
+    g.fillStyle = css("--soft"); g.font = "13px system-ui";
+    g.fillText("these channels carried no samples at all", MI.left, H / 2);
+    sal.innerHTML = "&nbsp;";
+    return;
+  }
+
+  const a = Math.ceil(V.x0), b = Math.floor(V.x1);
+  let ylo = 0, yhi = 0;
+  for (const c of CMP.curves)
+    for (let x = a; x <= b; x++) {
+      const y = c.m.get(x) || 0;
+      if (y < ylo) ylo = y;
+      if (y > yhi) yhi = y;
+    }
+  if (yhi - ylo <= 0) yhi = ylo + (CMP.norm ? 0.01 : 1);
+  const pad = (yhi - ylo) * 0.08;
+  yhi += pad;
+  if (ylo < 0) ylo -= pad;
+
+  const AX = W - MI.left - MI.right, AY = H - MI.arr - MI.aba;
+  const px = x => MI.left + (x - V.x0) / (V.x1 - V.x0) * AX;
+  const py = y => MI.arr + AY - (y - ylo) / (yhi - ylo) * AY;
+  const span = yhi - ylo;
+  const fy = y => CMP.norm ? y.toFixed(span < 0.01 ? 4 : 3)
+                           : y.toFixed(span >= 10 ? 0 : 1);
+
+  g.strokeStyle = css("--reja"); g.fillStyle = css("--soft");
+  g.font = "11px ui-monospace,monospace"; g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = ylo + span * i / 4, Y = Math.round(py(y)) + 0.5;
+    g.beginPath(); g.moveTo(MI.left, Y); g.lineTo(W - MI.right, Y); g.stroke();
+    const t = fy(y);
+    g.fillText(t, MI.left - 6 - g.measureText(t).width, Y + 4);
+  }
+  for (let i = 0; i <= 5; i++) {
+    const x = V.x0 + (V.x1 - V.x0) * i / 5, X = Math.round(px(x)) + 0.5;
+    g.beginPath(); g.moveTo(X, MI.arr); g.lineTo(X, MI.arr + AY); g.stroke();
+    const t = (V.x1 - V.x0 > 20 ? x.toFixed(0) : x.toFixed(1));
+    g.fillText(t, X - g.measureText(t).width / 2, MI.arr + AY + 16);
+  }
+  const xl = CMP.align ? "ADC code - baseline" : "ADC code";
+  g.fillText(xl, W - MI.right - g.measureText(xl).width, MI.arr + AY + 30);
+  g.fillText(CMP.norm ? "fraction" : "count", MI.left - 52, MI.arr - 3);
+
+  g.save();
+  g.beginPath(); g.rect(MI.left, MI.arr, AX, AY); g.clip();
+  if (CMP.mode === "diff") {
+    /* Zero is where the reference and the other channel agree. */
+    g.strokeStyle = css("--soft"); g.lineWidth = 1;
+    const Z = Math.round(py(0)) + 0.5;
+    g.beginPath(); g.moveTo(MI.left, Z); g.lineTo(W - MI.right, Z); g.stroke();
+  }
+  g.lineWidth = 2; g.lineJoin = "round";
+  for (const c of CMP.curves) {
+    g.strokeStyle = css("--s" + (c.slot + 1));
+    g.beginPath();
+    for (let x = a; x <= b; x++) {
+      const Y = py(c.m.get(x) || 0);
+      if (x === a) g.moveTo(px(x - 0.5), Y); else g.lineTo(px(x - 0.5), Y);
+      g.lineTo(px(x + 0.5), Y);
+    }
+    g.stroke();
+  }
+  g.restore();
+
+  if (V.cursor !== null && V.cursor >= MI.left && V.cursor <= W - MI.right) {
+    const x = Math.round(V.x0 + (V.cursor - MI.left) / AX * (V.x1 - V.x0));
+    g.strokeStyle = css("--accent"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(px(x), MI.arr); g.lineTo(px(x), MI.arr + AY); g.stroke();
+    const fv = v => CMP.norm ? v.toFixed(5) : String(v);
+    sal.textContent = (CMP.align ? "ADC - base " : "ADC ") + x + "  ->  "
+      + CMP.curves.map(c => c.label + ": " + fv(c.m.get(x) || 0)).join("   ");
+  } else {
+    sal.innerHTML = "&nbsp;";
+  }
+}
+
+/* ---------- saving what the big window shows ---------- */
+
+const US_PER_READOUT = 100, US_PER_SAMPLE = 0.1;   /* as in sampa_sniff.py */
+
+/* Which readout the waveform on screen comes from. While browsing a saved
+   run it is the one the scrubber is on, not the one the summary kept. */
+function waveReadout(k) {
+  if (modoOnda === "browse" && VENTANA) return VENTANA.rd;
+  return modoOnda === "latest" ? k.latest_readout : k.wave_readout;
+}
+
+/* The frame as it is on screen right now, cut to the zoom: only the points
+   whose x falls inside the visible range, which are the ones draw() uses.
+   The values are the real ones, never the min/max band the plot draws
+   when there are more samples than pixels, nor the histogram bars halfway
+   through their animation. */
+function frameText() {
+  const x0 = V.x0, x1 = V.x1;
+  const inside = x => x >= x0 && x <= x1;
+  const r4 = v => String(Math.round(v * 10000) / 10000);
+  const now = new Date();
+  const hh = n => String(n).padStart(2, "0");
+  const off = -now.getTimezoneOffset();
+  const stamp = now.getFullYear() + "-" + hh(now.getMonth() + 1) + "-" + hh(now.getDate())
+    + " " + hh(now.getHours()) + ":" + hh(now.getMinutes()) + ":" + hh(now.getSeconds())
+    + " UTC" + (off < 0 ? "-" : "+") + hh(Math.floor(Math.abs(off) / 60)) + ":" + hh(Math.abs(off) % 60);
+  const head = ["# SAMPA - " + D.file,
+                "# saved " + stamp
+                + (LIVE ? "  (live view: the frame on screen at that moment)" : "")];
+  let name, cols, rows;
+
+  if (V.type === "cmp") {
+    const chs = [...SEL.keys()];
+    head.push("# view: " + (CMP.mode === "diff"
+      ? "ADC spectrum difference, reference ch " + CMP.ref + " minus each other channel"
+      : "ADC spectra compared"));
+    head.push("# values: " + (CMP.norm ? "fraction of each channel's samples" : "counts")
+              + "; x: " + (CMP.align ? "ADC code minus the channel's baseline" : "ADC code"));
+    head.push("# baselines: " + chs.map(c => "ch" + c + "=" + D.channels[c].base).join(", "));
+    cols = [CMP.align ? "adc_minus_base" : "adc"].concat(CMP.curves.map(c => c.col));
+    rows = [];
+    for (let x = Math.ceil(x0); x <= Math.floor(x1); x++)
+      rows.push([x].concat(CMP.curves.map(c => {
+        const v = c.m.get(x) || 0;
+        return CMP.norm && v ? String(+v.toPrecision(6)) : String(v);
+      })));
+    name = "sampa_cmp_ch" + chs.join("-") + "_" + CMP.mode
+         + (CMP.norm ? "_norm" : "_counts") + (CMP.align ? "_aligned" : "");
+  } else {
+    const k = D.channels[V.ch];
+    const pts = V.pts.filter(p => inside(p[0]));
+    head.push("# view: " + TITLES[V.type] + ", channel " + V.ch + ", link " + k.link
+              + (k.base !== "" ? ", baseline " + k.base : ""));
+    const pad = String(V.ch).padStart(2, "0");
+    if (V.type === "wave") {
+      const rd = waveReadout(k);
+      head.push("# readout " + rd + " ("
+        + ({latest: "latest window", wave: "highest-amplitude window",
+            browse: "browsing the capture"})[modoOnda]
+        + "), which starts at t = " + r4(rd * US_PER_READOUT) + " us");
+      cols = ["sample", "t_us", "adc"];
+      rows = pts.map(p => [p[0], r4(rd * US_PER_READOUT + p[0] * US_PER_SAMPLE), p[1]]);
+      name = "sampa_ch" + pad + "_wave_rd" + rd;
+    } else if (V.type === "tmp") {
+      cols = ["readout", "t_ms", "max_adc"];
+      rows = pts.map(p => [p[0], r4(p[0] * US_PER_READOUT / 1000), p[1]]);
+      name = "sampa_ch" + pad + "_amplitude";
+    } else {
+      cols = ["adc", "count"];
+      rows = pts.map(p => [p[0], p[1]]);
+      name = "sampa_ch" + pad + (V.type === "esp" ? "_spectrum" : "_peak");
+    }
+  }
+  const all = V.pts.length ? V.pts[0][0] + " to " + V.pts[V.pts.length - 1][0] : "-";
+  head.push("# zoom: x from " + r4(x0) + " to " + r4(x1) + " (whole frame: " + all
+            + "); " + rows.length + " rows");
+  name += "_x" + Math.ceil(x0) + "-" + Math.floor(x1) + "_"
+        + hh(now.getHours()) + hh(now.getMinutes()) + hh(now.getSeconds()) + ".txt";
+  const text = head.join("\\n") + "\\n" + cols.join("\\t") + "\\n"
+             + rows.map(r => r.join("\\t")).join("\\n") + "\\n";
+  return {name, text, rows: rows.length};
+}
+
+/* The file is made in the browser and downloaded from there, so this works
+   the same live, with -f and in an .html saved to disk. */
+/* The answer goes on the button itself: the line under the plot belongs to
+   the cursor and is repainted on every frame. */
+function saveSaid(text, tip) {
+  const bt = document.getElementById("btSave");
+  bt.textContent = text; bt.title = tip;
+  clearTimeout(saveSaid.t);
+  saveSaid.t = setTimeout(() => {
+    bt.textContent = "save .txt";
+    bt.title = "save what this window shows, with the current zoom, as a text file";
+  }, 2500);
+}
+
+function saveFrame() {
+  if (!V.type) return;
+  const f = frameText();
+  if (!f.rows) {
+    saveSaid("nothing to save", "there are no data points in the visible range");
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([f.text], {type: "text/plain;charset=utf-8"}));
+  const a = document.createElement("a");
+  a.href = url; a.download = f.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  saveSaid("saved " + f.rows + " rows", f.name);
+}
+
+document.getElementById("btSave").onclick = saveFrame;
+
 /* ---------- montaje ---------- */
 
 function montar(nuevo) {
@@ -1034,7 +1477,9 @@ function montar(nuevo) {
        + 'in <code>CHEN0..CHEN3</code> looks like. If you expected data from '
        + 'them, check the chip configuration.</div>' : "");
 
-  if (V.type) {
+  if (V.type === "cmp") {
+    refreshCompare(true);
+  } else if (V.type) {
     const x0 = V.x0, x1 = V.x1;
     V.pts = series(V.type, D.channels[V.ch]);
     if (V.pts.length) { V.x0 = x0; V.x1 = x1; }
@@ -1433,6 +1878,56 @@ function startBoardPanel() {
   setInterval(tick, 3000);
 }
 
+const FD_PILL = {ok: "OK", idle: "WAITING", working: "REPAIRING",
+                 attention: "ATTENTION", decision: "STOPPED", unknown: "NO CONTACT"};
+
+function startFdirBanner() {
+  const box = document.getElementById("fdir");
+  const $ = id => document.getElementById(id);
+  let misses = 0;
+
+  function row(id, text) {
+    $(id).hidden = !text;
+  }
+
+  function draw(d) {
+    if (!d.active) { box.hidden = true; return; }
+    box.hidden = false;
+    box.className = d.level || "unknown";
+    $("fd-pill").textContent = FD_PILL[d.level] || "?";
+    $("fd-head").textContent = d.headline || "";
+    row("fd-r1", d.problem);
+    $("fd-problem").textContent = d.problem || "";
+    row("fd-r2", d.action);
+    $("fd-action").textContent = d.action || "";
+    let data = "";
+    if (d.data === true) data = "Some data may have been lost while this lasted.";
+    else if (d.data === false && d.level !== "ok") data = "Your data is not affected.";
+    row("fd-r3", data);
+    $("fd-data").textContent = data;
+    $("fd-since").textContent = d.clock_set === false
+      ? "(the board's clock is not set: times are approximate)" : "";
+    const h = d.history || [];
+    $("fd-hist").hidden = !h.length;
+    $("fd-list").innerHTML = h.map(e =>
+      "<li>" + esc(e.problem) + (e.action ? " " + esc(e.action) : "")
+      + '<span class="fd-ago">' + esc(e.ago || "") + "</span></li>").join("");
+  }
+
+  function tick() {
+    fetch("fdir", {cache: "no-store"})
+      .then(r => r.json())
+      .then(d => { misses = 0; draw(d); })
+      .catch(() => {
+        /* sampa_sniff itself is gone: the live bar already says so. */
+        if (++misses > 3) box.hidden = true;
+      });
+  }
+  $("fd-more").onclick = () => window.open("fdir/journal", "_blank", "noopener");
+  tick();
+  setInterval(tick, 2500);
+}
+
 if (LIVE) {
   /* Recording is served locally and answers instantly. The board panel does
      an ssh round trip that can take seconds, or time out, so it must not
@@ -1440,6 +1935,7 @@ if (LIVE) {
   startRecording();
   startScrub();
   startBoardPanel();
+  startFdirBanner();
 }
 
 

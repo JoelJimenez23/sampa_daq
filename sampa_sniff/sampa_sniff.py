@@ -506,30 +506,15 @@ class CsvWriter(object):
                 self.path_clusters, self.filas_clusters))
 
 
-# Returned by recv_exactly when the socket timed out but the run is not over
-# yet, so the caller should look at its own clock and come back. It is a
-# distinct object from None on purpose: None means the server closed, and
-# confusing the two would end a timed capture at the first quiet second.
-TIMEOUT = object()
-
-
-def recv_exactly(sock, nbytes, deadline=None):
-    """Read exactly nbytes. Returns None if the server closes.
-
-    With a deadline (a monotonic timestamp), a socket timeout is not the end
-    of anything: the partial data already read is kept and we keep waiting
-    until the deadline passes, at which point TIMEOUT is returned. That is
-    what lets a timed capture sit through a silent stretch without either
-    giving up or overrunning its stop time.
-    """
+def recv_exactly(sock, nbytes):
+    """Read exactly nbytes. Returns None if the server closes (or a timeout
+    set with --timeout expires)."""
     buf = b""
     while len(buf) < nbytes:
         try:
             chunk = sock.recv(nbytes - len(buf))
         except socket.timeout:
-            if deadline is not None and time.monotonic() < deadline:
-                continue          # keep the partial buffer and keep waiting
-            return TIMEOUT if deadline is not None else None
+            return None
         except socket.error as e:
             if e.errno == errno.EINTR:
                 continue
@@ -1302,7 +1287,7 @@ class Panel(object):
     """
 
     def __init__(self, port, mode, title, board=None, control=None,
-                 recorder=None, archive=None):
+                 recorder=None, archive=None, fdir=None):
         try:
             import sampa_view
         except ImportError:
@@ -1316,6 +1301,8 @@ class Panel(object):
                 "  Without --web this program works on its own.")
         self.sampa_view = sampa_view
         self.board = board
+        # The fault monitor's files (sampa_health.Source) or None.
+        self.fdir = fdir
         # Callable(dict) -> (list of lines, error). None means the page is
         # read-only, which is the default and the safe state.
         self.control = control
@@ -1361,6 +1348,15 @@ class Panel(object):
                 elif path == "/daq":
                     body = panel.daq().encode("utf-8")
                     type = "application/json"
+                elif path == "/fdir":
+                    body = panel.fdir_summary().encode("utf-8")
+                    type = "application/json"
+                elif path == "/fdir/log":
+                    body = panel.fdir_log(self.path).encode("utf-8")
+                    type = "application/json"
+                elif path == "/fdir/journal":
+                    body = panel.fdir_journal().encode("utf-8")
+                    type = "text/html; charset=utf-8"
                 else:
                     self.send_error(404)
                     return
@@ -1503,6 +1499,41 @@ class Panel(object):
             "t_us": round(pedido * US_PER_READOUT, 1),
             "channels": {str(k): v for k, v in canales.items()},
         })
+
+    def fdir_summary(self):
+        """The simple view of the fault monitor, for the banner."""
+        if self.fdir is None:
+            return json.dumps({"active": False})
+        import sampa_health
+        try:
+            return json.dumps(sampa_health.fdir_summary(self.fdir))
+        except Exception as e:           # the banner must never break the page
+            return json.dumps({"active": True, "level": "unknown",
+                               "headline": "Fault monitor not reachable",
+                               "problem": "%s: %s" % (type(e).__name__, e),
+                               "action": "", "data": None, "history": [],
+                               "facts": [], "decision": None})
+
+    def fdir_log(self, rawpath):
+        """New lines of the technical journal after ?since=OFFSET."""
+        if self.fdir is None:
+            return json.dumps({"error": "the fault monitor is not enabled",
+                               "lines": [], "next": 0})
+        m = re.search(r"[?&]since=(-?\d+)", rawpath)
+        since = int(m.group(1)) if m else -1
+        try:
+            lines, nxt, error = self.fdir.journal(since)
+        except Exception as e:
+            return json.dumps({"error": "%s: %s" % (type(e).__name__, e),
+                               "lines": [], "next": max(since, 0)})
+        # A smaller file than the offset was replaced: say so, the page
+        # starts its list again.
+        return json.dumps({"lines": lines, "next": nxt, "error": error,
+                           "reset": since >= 0 and nxt < since})
+
+    def fdir_journal(self):
+        import sampa_health
+        return sampa_health.JOURNAL_PAGE
 
     def daq(self):
         """Board status, for the DAQ section of the page."""
@@ -1690,12 +1721,6 @@ def run(args):
         # live monitoring needs, where minutes can go by between bursts
         # without a single byte.
         espera = args.timeout if args.timeout > 0 else None
-        if args.duration is not None:
-            # The deadline is only checked between packets, so with no data
-            # arriving a blocking recv would sail straight past it. Waking up
-            # at least once a second keeps the stop time exact even during a
-            # silent stretch.
-            espera = 1.0 if espera is None else min(espera, 1.0)
         sock.settimeout(espera)
         print("Connected. Ctrl-C to stop.")
         print("")
@@ -1774,6 +1799,17 @@ def run(args):
             target = args.board or "root@{0}".format(args.host)
             board = Board(target, args.daqstat)
 
+        fdir = None
+        if args.fdir_dir or (board is not None and not args.no_fdir):
+            try:
+                import sampa_health
+                fdir = sampa_health.Source(
+                    board=board, local_dir=args.fdir_dir,
+                    state_dir=args.fdir_state)
+            except ImportError:
+                print("  (the fault monitor banner needs sampa_health.py "
+                      "next to sampa_sniff.py; leaving it out)")
+
         control = None
         if args.allow_writes:
 
@@ -1837,7 +1873,7 @@ def run(args):
         try:
             panel = Panel(args.web, args.mode,
                           args.file or "{0}:{1}".format(args.host, args.port),
-                          board, control, recorder, archive)
+                          board, control, recorder, archive, fdir)
         except MissingFile as e:
             print("")
             print("  {0}".format(e))
@@ -1857,25 +1893,12 @@ def run(args):
         print("writing {0}_packets.csv ...".format(args.csv))
     readout = -1
     bx_ant = None
-    # Wall-clock deadline. Measured with a monotonic clock so that an NTP
-    # step or a daylight-saving change in the middle of a long run cannot
-    # stretch or shorten the experiment.
-    deadline = None
-    if args.duration is not None:
-        deadline = time.monotonic() + args.duration
     try:
         while args.count == 0 or stats.packets < args.count:
-            if deadline is not None and time.monotonic() >= deadline:
-                print("")
-                print("capture finished: the {0} requested have elapsed"
-                      .format(human_duration(args.duration)))
-                break
             # Between packets: the only safe place to open a recording.
             if recorder is not None:
                 recorder.at_boundary()
-            head = recv_exactly(sock, 8, deadline)
-            if head is TIMEOUT:
-                continue          # the deadline check at the top decides
+            head = recv_exactly(sock, 8)
             if head is None:
                 print("")
                 if args.timeout > 0:
@@ -1894,8 +1917,8 @@ def run(args):
 
             payload = b""
             if header.len32:
-                payload = recv_exactly(sock, header.len32 * 4, deadline)
-                if payload is TIMEOUT or payload is None:
+                payload = recv_exactly(sock, header.len32 * 4)
+                if payload is None:
                     print("conexion cortada a mitad de un packet")
                     break
             words = list(struct.unpack("<{0}I".format(header.len32), payload)) \
@@ -2018,6 +2041,17 @@ def main(argv=None):
                         "on the board over ssh. With no value it uses "
                         "root@<host>. --board is not used for the data, which "
                         "still comes in over port 1000")
+    p.add_argument("--no-fdir", action="store_true",
+                   help="with --board, do not show the fault monitor "
+                        "(sampa_fdir) banner")
+    p.add_argument("--fdir-state", default="/home/root/sampa_fdir_state",
+                   metavar="DIR",
+                   help="where sampa_fdir keeps its files on the board "
+                        "(default /home/root/sampa_fdir_state)")
+    p.add_argument("--fdir-dir", metavar="DIR",
+                   help="read the fault monitor's files from a local "
+                        "directory instead of the board: to try the page "
+                        "without hardware, or when running on the board")
     p.add_argument("--zs", metavar="COUNTS",
                    help="configure zero suppression on the chip before "
                         "capturing. Give the threshold in ADC counts (e.g. "
@@ -2041,11 +2075,6 @@ def main(argv=None):
     p.add_argument("--daqstat", default="./daqstat", metavar="PATH",
                    help="path to daqstat on the board (default ./daqstat, "
                         "i.e. /home/root/daqstat)")
-    p.add_argument("-d", "--duration", metavar="TIME",
-                   help="capture for exactly this long, then stop. Accepts "
-                        "HH:MM:SS (01:30:00), MM:SS (90:00) or suffixes "
-                        "(90s, 5m, 1h30m). The clock is monotonic, so an NTP "
-                        "step mid-run cannot stretch the experiment")
     p.add_argument("--save", metavar="FILE", nargs="?", const="",
                    help="also save the stream exactly as it arrives, "
                         "uninterpreted. This is the lossless copy and is much "
@@ -2080,13 +2109,6 @@ def main(argv=None):
                 p.error(str(e))
     else:
         args.zs_off = False
-    if args.duration is not None:
-        try:
-            args.duration = parse_duration(args.duration)
-        except ValueError as e:
-            p.error(str(e))
-        if args.duration <= 0:
-            p.error("--duration must be greater than zero")
     if args.timeout is None:
         # Vigilar en vivo no tiene sentido con un limite de tiempo: entre
         # tandas puede no llegar nada durante minutos.
